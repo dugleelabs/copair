@@ -1,7 +1,6 @@
 <p align="center">
   <img src="https://assets.dugleelabs.com/Copair_Logo_cc1a297c94.png" width="160" alt="Copair Logo" />
 </p>
-# Copair
 
 A model-agnostic AI coding agent for the terminal. Works like Claude Code but supports any LLM provider — commercial APIs, open source models, or self-hosted instances.
 

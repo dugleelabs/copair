@@ -7,9 +7,11 @@ export class Renderer {
   async render(stream: AsyncIterableIterator<StreamChunk>): Promise<{
     toolCalls: Array<{ id: string; name: string; arguments: string }>;
     usage: { inputTokens: number; outputTokens: number } | null;
+    fullText: string;
   }> {
     const toolCalls: Array<{ id: string; name: string; arguments: string }> = [];
     let usage: { inputTokens: number; outputTokens: number } | null = null;
+    let fullText = '';
 
     for await (const chunk of stream) {
       switch (chunk.type) {
@@ -18,6 +20,7 @@ export class Renderer {
             this.endToolIndicator();
           }
           process.stdout.write(chunk.text ?? '');
+          fullText += chunk.text ?? '';
           break;
 
         case 'tool_call_delta':
@@ -59,7 +62,7 @@ export class Renderer {
     // Ensure newline after streaming text
     process.stdout.write('\n');
 
-    return { toolCalls, usage };
+    return { toolCalls, usage, fullText };
   }
 
   showTokenUsage(

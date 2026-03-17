@@ -7,6 +7,7 @@ export { grepTool } from './grep.js';
 export { globTool } from './glob.js';
 export { bashTool } from './bash.js';
 export { gitTool } from './git.js';
+export { createWebSearchTool } from './web-search.js';
 
 import { ToolRegistry } from './registry.js';
 import { readTool } from './read.js';
@@ -16,8 +17,10 @@ import { grepTool } from './grep.js';
 import { globTool } from './glob.js';
 import { bashTool } from './bash.js';
 import { gitTool } from './git.js';
+import type { CopairConfig } from '../config/schema.js';
+import { createWebSearchTool } from './web-search.js';
 
-export function createDefaultToolRegistry(): ToolRegistry {
+export function createDefaultToolRegistry(config?: CopairConfig): ToolRegistry {
   const registry = new ToolRegistry();
   registry.register(readTool);
   registry.register(writeTool);
@@ -26,5 +29,9 @@ export function createDefaultToolRegistry(): ToolRegistry {
   registry.register(globTool);
   registry.register(bashTool);
   registry.register(gitTool);
+  if (config) {
+    const webSearch = createWebSearchTool(config);
+    if (webSearch) registry.register(webSearch);
+  }
   return registry;
 }

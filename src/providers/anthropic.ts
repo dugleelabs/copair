@@ -46,15 +46,23 @@ function toAnthropicMessages(
   return result;
 }
 
+type AnthropicToolParam = Anthropic.Tool | { type: 'web_search_20250305'; name: 'web_search' };
+
 function toAnthropicTools(
   tools: ToolDefinition[],
-): Anthropic.Tool[] | undefined {
+): AnthropicToolParam[] | undefined {
   if (tools.length === 0) return undefined;
-  return tools.map((t) => ({
-    name: t.name,
-    description: t.description,
-    input_schema: t.inputSchema as Anthropic.Tool.InputSchema,
-  }));
+  return tools.map((t) => {
+    // Detect web_search tool — pass through natively for Anthropic
+    if (t.name === 'web_search') {
+      return { type: 'web_search_20250305' as const, name: 'web_search' as const };
+    }
+    return {
+      name: t.name,
+      description: t.description,
+      input_schema: t.inputSchema as Anthropic.Tool.InputSchema,
+    };
+  });
 }
 
 export function createAnthropicProvider(
@@ -85,7 +93,7 @@ export function createAnthropicProvider(
       options: ProviderOptions,
     ): AsyncIterableIterator<StreamChunk> {
       const anthropicMessages = toAnthropicMessages(messages);
-      const anthropicTools = toAnthropicTools(tools);
+      const anthropicTools = toAnthropicTools(tools) as Anthropic.Tool[] | undefined;
 
       const systemPrompt =
         options.systemPrompt ??

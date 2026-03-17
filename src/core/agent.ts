@@ -3,6 +3,7 @@ import type { ToolRegistry } from '../tools/registry.js';
 import { ConversationManager } from './conversation.js';
 import { ContextWindowManager } from './context-window.js';
 import { Renderer } from '../cli/renderer.js';
+import { buildToolSystemPrompt, parseToolCallsFromText } from './tool-fallback.js';
 
 export interface AgentOptions {
   systemPrompt?: string;
@@ -42,6 +43,50 @@ export class Agent {
     return this.conversation;
   }
 
+  /**
+   * Switch to a new provider/model mid-session.
+   * Summarizes the conversation using the current model, then reinitializes.
+   */
+  async switchModel(newProvider: Provider, newModel: string): Promise<void> {
+    const history = this.conversation.getHistory();
+    if (history.length > 0) {
+      // Summarize the current conversation using the current model
+      const summaryPrompt = 'Summarize the conversation so far in a concise paragraph. Include key decisions, code changes, and context that would be needed to continue the work.';
+      this.conversation.appendText('user', summaryPrompt);
+
+      let summary = '';
+      try {
+        const stream = this.provider.chat(
+          this.conversation.getHistory(),
+          [],
+          { model: this._model, stream: true, maxTokens: 1024 },
+        );
+        for await (const chunk of stream) {
+          if (chunk.type === 'text') summary += chunk.text ?? '';
+        }
+      } catch {
+        summary = 'Previous session context (summarization failed).';
+      }
+
+      // Start fresh conversation with summary injected
+      this.conversation.clear();
+      this.conversation.appendText(
+        'user',
+        `[Context from previous session with ${this._model}]\n${summary}`,
+      );
+      this.conversation.appendText(
+        'assistant',
+        'Understood. I have the context from the previous session and am ready to continue.',
+      );
+
+      process.stderr.write(`\n[agent] Switched to ${newModel}. Context summarized.\n`);
+    }
+
+    this.provider = newProvider;
+    this._model = newModel;
+    this.contextWindow = new ContextWindowManager(newProvider.maxContextWindow);
+  }
+
   async handleMessage(userInput: string): Promise<{
     usage: { inputTokens: number; outputTokens: number } | null;
   }> {
@@ -56,19 +101,34 @@ export class Agent {
         this.provider,
       );
 
-      const tools = this.provider.supportsToolCalling
-        ? this.toolRegistry.getAllDefinitions()
-        : [];
+      const allTools = this.toolRegistry.getAllDefinitions();
+      const tools = this.provider.supportsToolCalling ? allTools : [];
+
+      // For non-tool-calling models, inject tool descriptions into the system prompt
+      const toolSystemPrompt =
+        !this.provider.supportsToolCalling && allTools.length > 0
+          ? buildToolSystemPrompt(allTools)
+          : undefined;
+      const systemPrompt = toolSystemPrompt
+        ? [this.options.systemPrompt, toolSystemPrompt].filter(Boolean).join('\n\n')
+        : this.options.systemPrompt;
 
       const stream = this.provider.chat(messages, tools, {
         model: this._model,
         stream: true,
-        systemPrompt: this.options.systemPrompt,
+        systemPrompt,
         maxTokens: this.options.maxTokens,
         temperature: this.options.temperature,
       });
 
-      const { toolCalls, usage } = await this.renderer.render(stream);
+      const { toolCalls: nativeToolCalls, usage, fullText } = await this.renderer.render(stream);
+
+      // For non-tool-calling models, parse tool invocations from text output
+      let toolCalls = nativeToolCalls;
+      if (!this.provider.supportsToolCalling && fullText) {
+        const parsed = parseToolCallsFromText(fullText);
+        toolCalls = parsed.toolCalls;
+      }
 
       if (usage) {
         totalUsage = totalUsage

@@ -1,0 +1,23 @@
+version: 1
+default_model: gpt-4o
+
+providers:
+  openai:
+    api_key: ${OPENAI_API_KEY}
+    models:
+      gpt-4o:
+        id: gpt-4o
+        max_tokens: 4096
+      gpt-4o-mini:
+        id: gpt-4o-mini
+        max_tokens: 4096
+      o1:
+        id: o1
+        max_tokens: 8192
+        supports_streaming: false
+
+permissions:
+  mode: ask
+  allow_commands:
+    - git status
+    - git diff

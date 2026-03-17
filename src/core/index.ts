@@ -11,3 +11,10 @@ export {
 export { Logger, LogLevel, logger } from './logger.js';
 export { detectGitContext, type GitContext } from './git-context.js';
 export { buildToolSystemPrompt, parseToolCallsFromText } from './tool-fallback.js';
+export {
+  writeRecovery,
+  deleteRecovery,
+  loadRecovery,
+  promptRecovery,
+  type RecoverySnapshot,
+} from './recovery.js';

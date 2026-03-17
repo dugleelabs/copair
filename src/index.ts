@@ -14,6 +14,13 @@ import { createDefaultToolRegistry } from './tools/index.js';
 import { McpClientManager, McpBridge } from './mcp/index.js';
 import { CommandRegistry } from './commands/index.js';
 import { createWorkflowCommand } from './commands/builtins/workflow.js';
+import {
+  writeRecovery,
+  deleteRecovery,
+  loadRecovery,
+  promptRecovery,
+} from './core/recovery.js';
+import { checkForUpdates } from './core/version-check.js';
 import type { CopairConfig, ProviderConfig } from './config/schema.js';
 
 function resolveModel(
@@ -51,6 +58,7 @@ function getProviderType(
 
 async function main() {
   const cliOpts = parseArgs();
+  checkForUpdates(); // non-blocking background check
   const config = loadConfig();
 
   const { providerName, modelAlias, providerConfig } = resolveModel(
@@ -89,12 +97,28 @@ async function main() {
   // Detect git context
   const gitCtx = detectGitContext(process.cwd());
 
+  // Check for crash recovery
+  const snapshot = await loadRecovery();
+  let recoverSession = false;
+  if (snapshot) {
+    recoverSession = await promptRecovery(snapshot);
+    await deleteRecovery();
+  }
+
   // Set up agent
   const agent = new Agent(provider, modelAlias, toolRegistry, {
     systemPrompt:
       'You are Copair, an AI coding assistant. Help the user with software development tasks. ' +
       'You have access to tools for reading, writing, and editing files, searching code, and running commands.',
   });
+
+  // Restore previous session if user accepted recovery
+  if (recoverSession && snapshot) {
+    for (const msg of snapshot.messages) {
+      agent.getConversation().append(msg.role, msg.content);
+    }
+    console.log(`Restored ${snapshot.messages.length} messages from previous session.`);
+  }
 
   // Build agent context for commands
   const agentContext = {
@@ -132,6 +156,12 @@ async function main() {
     {
       onMessage: async (input) => {
         await agent.handleMessage(input);
+        // Write recovery snapshot after each turn
+        await writeRecovery({
+          model: agent.model,
+          messages: agent.getConversation().getHistory(),
+          savedAt: new Date().toISOString(),
+        });
       },
       onSlashCommand: async (command, args) => {
         const fullInput = args ? `${command} ${args}` : command;
@@ -180,6 +210,7 @@ async function main() {
         }
       },
       onExit: async () => {
+        await deleteRecovery();
         await mcpManager.shutdown();
         console.log('\nGoodbye!');
       },

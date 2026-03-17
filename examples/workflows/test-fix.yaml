@@ -1,0 +1,57 @@
+name: test-fix
+description: Run tests, fix failures, repeat until green or max attempts reached
+inputs:
+  - name: test_command
+    description: Command to run tests
+    default: npm test
+  - name: max_attempts
+    description: Maximum number of fix attempts
+    default: "3"
+
+steps:
+  - id: run-tests
+    type: shell
+    command: "{{test_command}}"
+    capture: test_output
+    continue_on_error: true
+
+  - id: check-result
+    type: condition
+    if: "{{steps.run-tests.exit_code}} == 0"
+    then: done
+    else: fix-failures
+
+  - id: fix-failures
+    type: prompt
+    message: |
+      The following tests failed:
+
+      ```
+      {{test_output}}
+      ```
+
+      Analyze the failures and fix the code. Do not modify the test files themselves.
+
+  - id: rerun-tests
+    type: shell
+    command: "{{test_command}}"
+    capture: test_output
+    continue_on_error: true
+    max_iterations: "{{max_attempts}}"
+    loop_until: "{{exit_code}} == 0"
+    on_max_iterations: report
+
+  - id: report
+    type: prompt
+    message: |
+      After {{max_attempts}} attempts, tests are still failing. Here is the current state:
+
+      ```
+      {{test_output}}
+      ```
+
+      Summarize what was fixed, what is still failing, and suggest next steps.
+
+  - id: done
+    type: output
+    message: "All tests passing."

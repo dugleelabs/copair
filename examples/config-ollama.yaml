@@ -1,0 +1,21 @@
+version: 1
+default_model: llama3
+
+providers:
+  ollama:
+    type: openai-compatible
+    base_url: http://localhost:11434/v1
+    models:
+      llama3:
+        id: llama3.1:8b
+        max_tokens: 4096
+        context_window: 131072
+        supports_tool_calling: false
+      qwen2:
+        id: qwen2.5-coder:7b
+        max_tokens: 4096
+        context_window: 32768
+        supports_tool_calling: true
+
+permissions:
+  mode: ask

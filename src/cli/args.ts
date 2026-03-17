@@ -1,8 +1,18 @@
 import { Command } from 'commander';
 import { createRequire } from 'node:module';
+import { resolve, dirname } from 'node:path';
+import { fileURLToPath } from 'node:url';
 
+// Resolve package.json relative to this file at runtime (works for both src/ and dist/)
+const _dir = dirname(fileURLToPath(import.meta.url));
 const require = createRequire(import.meta.url);
-const pkg = require('../../package.json');
+const pkg = (() => {
+  // Try parent dirs until we find package.json
+  for (const rel of ['../package.json', '../../package.json']) {
+    try { return require(resolve(_dir, rel)); } catch { /* skip */ }
+  }
+  return { name: 'copair', version: '0.1.0' };
+})();
 
 export interface CliOptions {
   model?: string;

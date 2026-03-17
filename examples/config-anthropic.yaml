@@ -1,0 +1,20 @@
+version: 1
+default_model: claude-sonnet
+
+providers:
+  anthropic:
+    api_key: ${ANTHROPIC_API_KEY}
+    models:
+      claude-sonnet:
+        id: claude-sonnet-4-20250514
+        max_tokens: 8192
+      claude-opus:
+        id: claude-opus-4-20250514
+        max_tokens: 8192
+
+permissions:
+  mode: ask
+  allow_commands:
+    - git status
+    - git diff
+    - git log --oneline -10

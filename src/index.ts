@@ -125,7 +125,7 @@ async function main() {
       '    \n' +
       '    <body: 2–5 bullet points summarising what changed and why>\n' +
       '    \n' +
-      '    Co-authored-by: Copair <copair[bot]@noreply.dugleelabs.io>\n' +
+      `    Co-authored-by: ${config.identity.name} <${config.identity.email}>\n` +
       '  Valid types: feat, fix, chore, docs, refactor, test, perf\n' +
       '  The Co-authored-by trailer is added automatically by the git tool — do not omit it.\n' +
       '  The body is required: always explain what changed and why, even for small commits.',

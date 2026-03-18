@@ -6,7 +6,7 @@ export { editTool } from './edit.js';
 export { grepTool } from './grep.js';
 export { globTool } from './glob.js';
 export { bashTool } from './bash.js';
-export { gitTool } from './git.js';
+export { gitTool, createGitTool } from './git.js';
 export { createWebSearchTool } from './web-search.js';
 
 import { ToolRegistry } from './registry.js';
@@ -16,7 +16,7 @@ import { editTool } from './edit.js';
 import { grepTool } from './grep.js';
 import { globTool } from './glob.js';
 import { bashTool } from './bash.js';
-import { gitTool } from './git.js';
+import { createGitTool } from './git.js';
 import type { CopairConfig } from '../config/schema.js';
 import { createWebSearchTool } from './web-search.js';
 
@@ -28,7 +28,7 @@ export function createDefaultToolRegistry(config?: CopairConfig): ToolRegistry {
   registry.register(grepTool);
   registry.register(globTool);
   registry.register(bashTool);
-  registry.register(gitTool);
+  registry.register(createGitTool(config?.identity));
   if (config) {
     const webSearch = createWebSearchTool(config);
     if (webSearch) registry.register(webSearch);

@@ -40,6 +40,11 @@ export const WebSearchConfigSchema = z.object({
   max_results: z.number().positive().default(5),
 });
 
+export const IdentityConfigSchema = z.object({
+  name: z.string().default('Copair'),
+  email: z.string().email().default('copair[bot]@noreply.dugleelabs.io'),
+});
+
 export const CopairConfigSchema = z.object({
   version: z.number().int().positive(),
   default_model: z.string().optional(),
@@ -48,8 +53,10 @@ export const CopairConfigSchema = z.object({
   feature_flags: FeatureFlagsSchema.default({ model_routing: false }),
   mcp_servers: z.array(McpServerConfigSchema).default([]),
   web_search: WebSearchConfigSchema.optional(),
+  identity: IdentityConfigSchema.default({ name: 'Copair', email: 'copair[bot]@noreply.dugleelabs.io' }),
 });
 
 export type CopairConfig = z.infer<typeof CopairConfigSchema>;
 export type ProviderConfig = z.infer<typeof ProviderConfigSchema>;
 export type ModelConfig = z.infer<typeof ModelConfigSchema>;
+export type IdentityConfig = z.infer<typeof IdentityConfigSchema>;

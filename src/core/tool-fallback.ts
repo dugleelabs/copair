@@ -16,20 +16,23 @@ export function buildToolSystemPrompt(tools: ToolDefinition[]): string {
     .join('\n\n');
 
   return `
-You have access to tools. To use a tool, emit EXACTLY this format (the fence tag MUST be "tool_call"):
+You have access to tools. You MUST use tools to perform any action. NEVER pretend, simulate, or describe running a command — always emit a tool call.
+
+To call a tool, emit EXACTLY:
 
 \`\`\`tool_call
 {"name": "<tool_name>", "arguments": { ... }}
 \`\`\`
 
-IMPORTANT: Use \`\`\`tool_call — not \`\`\`json, not \`\`\`text, not bare JSON. The fence MUST say tool_call.
+Rules:
+- The fence MUST say tool_call (not json, not text).
+- One tool call per message. Wait for the result before continuing.
+- NEVER output fake results. NEVER narrate what a tool would return. Call the tool and use the real result.
 
-Example — to run git status:
+Example — to check git status:
 \`\`\`tool_call
 {"name": "git", "arguments": {"args": "status"}}
 \`\`\`
-
-One tool call per message. Wait for the result before continuing.
 
 ## Tools
 
@@ -69,6 +72,8 @@ export function parseToolCallsFromText(text: string): {
   const patterns: RegExp[] = [
     /```(?:tool_call|json)?\s*\n([\s\S]*?)```/g,
     /<tool_call>\s*\n?([\s\S]*?)<\/tool_call>/g,
+    // Unclosed <tool_call> — model forgot closing tag (common with small models)
+    /<tool_call>\s*\n?([\s\S]*?)$/g,
   ];
 
   for (const regex of patterns) {

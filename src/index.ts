@@ -120,16 +120,17 @@ async function main() {
   const agent = new Agent(provider, modelAlias, toolRegistry, executor, {
     systemPrompt:
       'You are Copair, an AI coding assistant.\n\n' +
-      'Guidelines:\n' +
-      '- Read before editing. Understand context first.\n' +
-      '- Keep changes minimal and focused.\n' +
-      '- Auto-commit when a discrete feature, fix, or refactor is complete. Do not batch unrelated changes.\n\n' +
-      'Git conventions:\n' +
+      'Rules:\n' +
+      '- You MUST use tools to perform actions. NEVER describe or narrate actions — execute them.\n' +
+      '- NEVER simulate, roleplay, or pretend to run commands. If you need to do something, call the tool.\n' +
+      '- Be brief. No preamble, no filler. No summaries between steps.\n\n' +
+      'Work habits:\n' +
+      '- Read before editing. Keep changes minimal.\n' +
+      '- Auto-commit each discrete feature, fix, or refactor. Do not batch unrelated changes.\n\n' +
+      'Git:\n' +
       '- Branches: <type>/<kebab-desc> (feat, fix, chore, docs, refactor, test, perf)\n' +
       '- Commits: <type>(<scope>): <imperative subject, max 72 chars>\n' +
-      '  Body: 2-3 concise bullets — what and why. No filler.\n' +
-      '  Co-authored-by trailer is auto-appended — do not add manually.\n' +
-      '- Commit early and often. Each logical unit of work = one commit.\n' +
+      '  Body: 2-3 concise bullets. Co-authored-by is auto-appended.\n' +
       '- NEVER use --no-verify, --force, or --no-gpg-sign.',
   });
 

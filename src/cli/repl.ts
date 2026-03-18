@@ -1,6 +1,12 @@
 import { createInterface, type Interface } from 'node:readline';
+import { readFileSync, writeFileSync, mkdirSync } from 'node:fs';
+import { join } from 'node:path';
+import { homedir } from 'node:os';
 import chalk from 'chalk';
 import { printBanner } from './banner.js';
+
+const HISTORY_FILE = join(homedir(), '.copair', 'history');
+const MAX_HISTORY = 500;
 
 export interface ReplCallbacks {
   onMessage: (input: string) => Promise<void>;
@@ -16,10 +22,12 @@ export class Repl {
   private exited = false;
   private ctrlCCount = 0;
   private ctrlCTimer: ReturnType<typeof setTimeout> | null = null;
+  private history: string[] = [];
 
   constructor(callbacks: ReplCallbacks, modelName: string) {
     this.callbacks = callbacks;
     this.modelName = modelName;
+    this.history = loadHistory();
   }
 
   setModel(name: string): void {
@@ -33,11 +41,7 @@ export class Repl {
   async start(): Promise<void> {
     this.running = true;
 
-    this.rl = createInterface({
-      input: process.stdin,
-      output: process.stdout,
-      terminal: true,
-    });
+    this.rl = this.createRL();
 
     printBanner(this.modelName);
     this.attachHandlers();
@@ -51,6 +55,11 @@ export class Repl {
 
       const trimmed = input.trim();
       if (!trimmed) continue;
+
+      // Persist to history
+      this.history.unshift(trimmed);
+      if (this.history.length > MAX_HISTORY) this.history.length = MAX_HISTORY;
+      saveHistory(this.history);
 
       if (trimmed.startsWith('/')) {
         const spaceIdx = trimmed.indexOf(' ');
@@ -101,11 +110,7 @@ export class Repl {
       }
       process.stdout.write(chalk.yellow('\n  Press Ctrl+C or Ctrl+D again to exit (or /exit)\n'));
       // Re-create readline so the REPL keeps running
-      this.rl = createInterface({
-        input: process.stdin,
-        output: process.stdout,
-        terminal: true,
-      });
+      this.rl = this.createRL();
       this.attachHandlers();
       this.resetCtrlCTimer();
     });
@@ -131,6 +136,16 @@ export class Repl {
     await this.callbacks.onExit();
   }
 
+  private createRL(): Interface {
+    return createInterface({
+      input: process.stdin,
+      output: process.stdout,
+      terminal: true,
+      history: [...this.history],
+      historySize: MAX_HISTORY,
+    });
+  }
+
   private readline(): Promise<string | null> {
     return new Promise((resolve) => {
       if (!this.rl || !this.running) {
@@ -141,5 +156,27 @@ export class Repl {
         resolve(answer);
       });
     });
+  }
+}
+
+// ── History persistence ─────────────────────────────────────────────────────
+
+function loadHistory(): string[] {
+  try {
+    return readFileSync(HISTORY_FILE, 'utf-8')
+      .split('\n')
+      .filter(Boolean)
+      .slice(0, MAX_HISTORY);
+  } catch {
+    return [];
+  }
+}
+
+function saveHistory(history: string[]): void {
+  try {
+    mkdirSync(join(homedir(), '.copair'), { recursive: true });
+    writeFileSync(HISTORY_FILE, history.join('\n') + '\n');
+  } catch {
+    // Non-critical — silently ignore
   }
 }

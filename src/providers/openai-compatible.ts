@@ -12,7 +12,14 @@ export function createOpenAICompatibleProvider(
     );
   }
 
-  const provider = createOpenAIProvider(config, modelAlias);
+  // Local servers (Ollama, llama.cpp, etc.) don't require an API key.
+  // The OpenAI SDK throws if apiKey is missing and OPENAI_API_KEY is unset,
+  // so we provide a placeholder when no key is configured.
+  const effectiveConfig = config.api_key
+    ? config
+    : { ...config, api_key: 'ollama' };
+
+  const provider = createOpenAIProvider(effectiveConfig, modelAlias);
 
   // Override the name to distinguish from native OpenAI
   return {

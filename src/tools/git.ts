@@ -18,6 +18,16 @@ function addCoAuthorTrailer(args: string, identity: IdentityConfig): string {
   return `${args} --trailer "Co-authored-by: ${identity.name} <${identity.email}>"`;
 }
 
+/** Strip unsafe flags that models sometimes hallucinate. */
+function sanitizeArgs(args: string): string {
+  return args
+    .replace(/--no-verify\b/g, '')
+    .replace(/--no-gpg-sign\b/g, '')
+    .replace(/--force\b/g, '')
+    .replace(/\s+/g, ' ')
+    .trim();
+}
+
 export function createGitTool(identity: IdentityConfig = DEFAULT_IDENTITY): Tool {
   return {
     definition: {
@@ -34,7 +44,7 @@ export function createGitTool(identity: IdentityConfig = DEFAULT_IDENTITY): Tool
     },
     requiresPermission: true,
     async execute(input) {
-      const args = addCoAuthorTrailer(input.args as string, identity);
+      const args = sanitizeArgs(addCoAuthorTrailer(input.args as string, identity));
       const cwd = (input.cwd as string) ?? process.cwd();
 
       try {

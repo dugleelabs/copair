@@ -21,6 +21,9 @@ import {
   promptRecovery,
 } from './core/recovery.js';
 import { checkForUpdates } from './core/version-check.js';
+import { ApprovalGate } from './core/approval-gate.js';
+import { ToolExecutor } from './core/tool-executor.js';
+import { loadAllowList } from './core/allow-list.js';
 import type { CopairConfig, ProviderConfig } from './config/schema.js';
 
 function resolveModel(
@@ -83,6 +86,9 @@ async function main() {
 
   // Set up tools
   const toolRegistry = createDefaultToolRegistry(config);
+  const allowList = loadAllowList();
+  const gate = new ApprovalGate(config.permissions.mode, allowList);
+  const executor = new ToolExecutor(toolRegistry, gate);
 
   // Deferred MCP initialization — starts after REPL is up
   const mcpManager = new McpClientManager();
@@ -111,24 +117,20 @@ async function main() {
   }
 
   // Set up agent
-  const agent = new Agent(provider, modelAlias, toolRegistry, {
+  const agent = new Agent(provider, modelAlias, toolRegistry, executor, {
     systemPrompt:
-      'You are Copair, an AI coding assistant. Help the user with software development tasks. ' +
-      'You have access to tools for reading, writing, and editing files, searching code, and running commands.\n\n' +
-      'Git conventions to follow:\n' +
-      '- Branch names must include a type prefix and a short description: <type>/<kebab-case-description>\n' +
-      '  Valid types: feat, fix, chore, docs, refactor, test, perf\n' +
-      '  Examples: fix/auth-token-expiry, feat/dark-mode, chore/update-deps\n' +
-      '  Never use bare names like "fix", "feature", "patch" without a description.\n' +
-      '- Commit messages must follow this structure:\n' +
-      '    <type>(<scope>): <short imperative subject — max 72 chars>\n' +
-      '    \n' +
-      '    <body: 2–5 bullet points summarising what changed and why>\n' +
-      '    \n' +
-      `    Co-authored-by: ${config.identity.name} <${config.identity.email}>\n` +
-      '  Valid types: feat, fix, chore, docs, refactor, test, perf\n' +
-      '  The Co-authored-by trailer is added automatically by the git tool — do not omit it.\n' +
-      '  The body is required: always explain what changed and why, even for small commits.',
+      'You are Copair, an AI coding assistant.\n\n' +
+      'Guidelines:\n' +
+      '- Read before editing. Understand context first.\n' +
+      '- Keep changes minimal and focused.\n' +
+      '- Auto-commit when a discrete feature, fix, or refactor is complete. Do not batch unrelated changes.\n\n' +
+      'Git conventions:\n' +
+      '- Branches: <type>/<kebab-desc> (feat, fix, chore, docs, refactor, test, perf)\n' +
+      '- Commits: <type>(<scope>): <imperative subject, max 72 chars>\n' +
+      '  Body: 2-3 concise bullets — what and why. No filler.\n' +
+      '  Co-authored-by trailer is auto-appended — do not add manually.\n' +
+      '- Commit early and often. Each logical unit of work = one commit.\n' +
+      '- NEVER use --no-verify, --force, or --no-gpg-sign.',
   });
 
   // Restore previous session if user accepted recovery

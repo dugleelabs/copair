@@ -5,7 +5,14 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import { Agent } from '../../src/core/agent.js';
 import { ToolRegistry } from '../../src/tools/registry.js';
+import { ApprovalGate } from '../../src/core/approval-gate.js';
+import { ToolExecutor } from '../../src/core/tool-executor.js';
 import type { Provider, StreamChunk, Message, ToolDefinition } from '../../src/providers/interface.js';
+
+/** Build a ToolExecutor with an auto-approve gate so tests never block on stdin. */
+function makeExecutor(registry: ToolRegistry): ToolExecutor {
+  return new ToolExecutor(registry, new ApprovalGate('auto-approve'));
+}
 
 // Suppress stdout/stderr during tests
 beforeEach(() => {
@@ -53,7 +60,7 @@ describe('agent loop — plain text response', () => {
     ];
     const provider = mockProvider(chunks);
     const registry = new ToolRegistry();
-    const agent = new Agent(provider, 'mock-model', registry);
+    const agent = new Agent(provider, 'mock-model', registry, makeExecutor(registry));
 
     const { usage } = await agent.handleMessage('Hi');
     expect(usage).toEqual({ inputTokens: 10, outputTokens: 5 });
@@ -95,7 +102,7 @@ describe('agent loop — tool call then final response', () => {
     const tool = echoTool();
     registry.register(tool);
 
-    const agent = new Agent(provider, 'mock-model', registry);
+    const agent = new Agent(provider, 'mock-model', registry, makeExecutor(registry));
     const { usage } = await agent.handleMessage('echo ping');
 
     expect(callCount).toBe(2);
@@ -142,7 +149,7 @@ describe('agent loop — unknown tool', () => {
     };
 
     const registry = new ToolRegistry();
-    const agent = new Agent(provider, 'mock-model', registry);
+    const agent = new Agent(provider, 'mock-model', registry, makeExecutor(registry));
     await agent.handleMessage('use nonexistent tool');
     // No throw — test passes if we reach here
   });
@@ -180,7 +187,7 @@ describe('agent loop — tool fallback for non-tool-calling models', () => {
       execute: executeMock,
     });
 
-    const agent = new Agent(provider, 'mock-model', registry);
+    const agent = new Agent(provider, 'mock-model', registry, makeExecutor(registry));
     await agent.handleMessage('use echo');
 
     expect(callCount).toBe(2);

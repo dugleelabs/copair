@@ -1,8 +1,9 @@
 import type { Provider, ContentBlock } from '../providers/interface.js';
 import type { ToolRegistry } from '../tools/registry.js';
+import type { ToolExecutor } from './tool-executor.js';
 import { ConversationManager } from './conversation.js';
 import { ContextWindowManager } from './context-window.js';
-import { Renderer } from '../cli/renderer.js';
+import { Renderer, formatToolCallFromInput } from '../cli/renderer.js';
 import { buildToolSystemPrompt, parseToolCallsFromText } from './tool-fallback.js';
 
 export interface AgentOptions {
@@ -14,6 +15,7 @@ export interface AgentOptions {
 export class Agent {
   private provider: Provider;
   private toolRegistry: ToolRegistry;
+  private executor: ToolExecutor;
   private conversation: ConversationManager;
   private contextWindow: ContextWindowManager;
   private renderer: Renderer;
@@ -24,11 +26,13 @@ export class Agent {
     provider: Provider,
     model: string,
     toolRegistry: ToolRegistry,
+    executor: ToolExecutor,
     options: AgentOptions = {},
   ) {
     this.provider = provider;
     this._model = model;
     this.toolRegistry = toolRegistry;
+    this.executor = executor;
     this.conversation = new ConversationManager();
     this.contextWindow = new ContextWindowManager(provider.maxContextWindow);
     this.renderer = new Renderer();
@@ -140,9 +144,7 @@ export class Agent {
       }
 
       if (toolCalls.length === 0) {
-        // Final text response — collect and append assistant message
-        // The text was already streamed by the renderer
-        // We need to reconstruct what was streamed
+        // Final text response — the text was already streamed by the renderer
         break;
       }
 
@@ -155,22 +157,82 @@ export class Agent {
       }));
       this.conversation.append('assistant', assistantContent);
 
-      // Execute each tool and collect results
+      // Execute each tool through the executor.
+      // The executor calls the approval gate unconditionally — the agent
+      // never interacts with the gate directly.
+      //
+      // If the user denies any operation, abort the entire turn — do not
+      // execute remaining tools. The denial is final: return to REPL.
       const toolResults: ContentBlock[] = [];
+      let denied = false;
       for (const tc of toolCalls) {
-        const tool = this.toolRegistry.get(tc.name);
-        if (!tool) {
+        const toolInput = JSON.parse(tc.arguments || '{}') as Record<string, unknown>;
+        const label = formatToolCallFromInput(tc.name, toolInput);
+
+        // Spinner starts only after the approval gate passes (via callback)
+        // so it doesn't overlap with the approval prompt.
+        let spinner: ReturnType<Renderer['startToolSpinner']> | null = null;
+
+        const result = await this.executor.execute(tc.name, toolInput, () => {
+          spinner = this.renderer.startToolSpinner(label);
+        });
+
+        // Stop spinner before showing the final state
+        spinner?.stop();
+
+        if (result.denied) {
+          this.renderer.deniedToolExecution(label);
+
+          // Append error tool_result for the denied tool
           toolResults.push({
             type: 'tool_result',
             toolUseId: tc.id,
-            content: `Error: Unknown tool "${tc.name}"`,
+            content: 'Denied by user.',
             isError: true,
           });
-          continue;
+
+          // Append error tool_results for all remaining unexecuted tools
+          // (API requires a tool_result for every tool_use in the assistant message)
+          const currentIdx = toolCalls.indexOf(tc);
+          for (let i = currentIdx + 1; i < toolCalls.length; i++) {
+            toolResults.push({
+              type: 'tool_result',
+              toolUseId: toolCalls[i].id,
+              content: 'Aborted: previous tool was denied by user.',
+              isError: true,
+            });
+          }
+
+          denied = true;
+          break;
         }
 
-        const toolInput = JSON.parse(tc.arguments || '{}');
-        const result = await tool.execute(toolInput);
+        // Gate allowed — show completed with actual execution time
+        this.renderer.completeToolExecution(label, result._durationMs ?? 0);
+
+        // Show rich output for tool results
+        if (!result.isError) {
+          if (tc.name === 'edit' && toolInput.old_string && toolInput.new_string) {
+            this.renderer.showDiff(
+              String(toolInput.file_path ?? ''),
+              String(toolInput.old_string),
+              String(toolInput.new_string),
+            );
+          } else if (tc.name === 'write' && toolInput.content) {
+            this.renderer.showDiff(
+              String(toolInput.file_path ?? ''),
+              null,
+              String(toolInput.content),
+            );
+          } else if (tc.name === 'git') {
+            const args = String(toolInput.args ?? '').trim();
+            const sub = args.split(/\s+/)[0];
+            if (sub === 'diff') {
+              this.renderer.showGitDiff(result.content);
+            }
+          }
+        }
+
         toolResults.push({
           type: 'tool_result',
           toolUseId: tc.id,
@@ -179,7 +241,12 @@ export class Agent {
         });
       }
 
+      // Always append tool results to keep conversation valid for the API.
+      // Even on denial, every tool_use must have a matching tool_result.
       this.conversation.append('user', toolResults);
+
+      // Denial aborts the entire agent turn — return to REPL immediately
+      if (denied) break;
     }
 
     return { usage: totalUsage };

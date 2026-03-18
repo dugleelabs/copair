@@ -1,4 +1,6 @@
 import chalk from 'chalk';
+import { Spinner } from './spinner.js';
+import { MarkdownWriter } from './markdown.js';
 import type { StreamChunk } from '../providers/interface.js';
 
 /**
@@ -7,34 +9,60 @@ import type { StreamChunk } from '../providers/interface.js';
  *   bash: npm test
  *   read: src/index.ts
  */
-function formatToolCall(name: string, argsJson: string): string {
+export function formatToolCall(name: string, argsJson: string): string {
   try {
     const args = JSON.parse(argsJson) as Record<string, unknown>;
+    let raw: string;
     switch (name) {
       case 'git':
-        return `git ${args.args ?? ''}`.trim();
+        raw = `git ${args.args ?? ''}`.trim();
+        break;
       case 'bash':
-        return `bash: ${String(args.command ?? '').slice(0, 80)}`;
+        raw = `bash: ${args.command ?? ''}`;
+        break;
       case 'read':
-        return `read: ${args.file_path ?? args.path ?? ''}`;
+        raw = `read: ${args.file_path ?? args.path ?? ''}`;
+        break;
       case 'write':
-        return `write: ${args.file_path ?? args.path ?? ''}`;
+        raw = `write: ${args.file_path ?? args.path ?? ''}`;
+        break;
       case 'edit':
-        return `edit: ${args.file_path ?? args.path ?? ''}`;
+        raw = `edit: ${args.file_path ?? args.path ?? ''}`;
+        break;
       case 'glob':
-        return `glob: ${args.pattern ?? ''}`;
+        raw = `glob: ${args.pattern ?? ''}`;
+        break;
       case 'grep':
-        return `grep: ${args.pattern ?? ''}`;
+        raw = `grep: ${args.pattern ?? ''}`;
+        break;
       default:
-        return name;
+        raw = name;
+        break;
     }
+    return oneLine(raw);
   } catch {
     return name;
   }
 }
 
+/** Collapse multi-line strings into a single truncated line for display. */
+function oneLine(s: string, maxLen = 80): string {
+  // Replace newlines with spaces, collapse whitespace
+  const flat = s.replace(/\n/g, ' ').replace(/\s+/g, ' ').trim();
+  if (flat.length <= maxLen) return flat;
+  return flat.slice(0, maxLen - 1) + '…';
+}
+
+export function formatToolCallFromInput(name: string, input: Record<string, unknown>): string {
+  return formatToolCall(name, JSON.stringify(input));
+}
+
 export class Renderer {
   private currentToolName: string | null = null;
+  private pendingDeltaLine = false;
+  private thinkingSpinner: Spinner | null = null;
+  private deltaSpinner: Spinner | null = null;
+  private mdWriter: MarkdownWriter | null = null;
 
   async render(stream: AsyncIterableIterator<StreamChunk>): Promise<{
     toolCalls: Array<{ id: string; name: string; arguments: string }>;
@@ -45,32 +73,64 @@ export class Renderer {
     let usage: { inputTokens: number; outputTokens: number } | null = null;
     let fullText = '';
 
+    // Markdown-aware text writer for styled inline code and code blocks
+    this.mdWriter = new MarkdownWriter();
+
+    // Start the "thinking" spinner — visible until the first content chunk
+    this.thinkingSpinner = new Spinner(chalk.dim('thinking...'), chalk.magenta);
+    this.thinkingSpinner.start();
+
     for await (const chunk of stream) {
       switch (chunk.type) {
         case 'text':
+          this.stopThinkingSpinner();
+          if (this.deltaSpinner) {
+            this.deltaSpinner.stop();
+            this.deltaSpinner = null;
+          }
           if (this.currentToolName) {
             this.endToolIndicator();
           }
-          process.stdout.write(chunk.text ?? '');
+          this.mdWriter.write(chunk.text ?? '');
           fullText += chunk.text ?? '';
           break;
 
         case 'tool_call_delta':
+          this.stopThinkingSpinner();
+          // Show an animated spinner on the first delta for a tool call.
+          // When the full tool_call arrives, we replace it with the final label.
           if (chunk.toolCall && chunk.toolCall.name !== this.currentToolName) {
+            if (this.deltaSpinner) {
+              this.deltaSpinner.stop();
+              this.deltaSpinner = null;
+            }
             if (this.currentToolName) this.endToolIndicator();
             this.currentToolName = chunk.toolCall.name;
-            process.stderr.write(
-              chalk.gray(`\n  ⚙ ${chunk.toolCall.name} `),
+            process.stderr.write('\n');
+            this.deltaSpinner = new Spinner(
+              chalk.gray(chunk.toolCall.name + '...'),
+              chalk.green,
             );
+            this.deltaSpinner.start();
+            this.pendingDeltaLine = true;
           }
           break;
 
         case 'tool_call':
+          this.stopThinkingSpinner();
           if (chunk.toolCall) {
-            if (this.currentToolName) this.endToolIndicator();
+            // Stop the delta spinner and overwrite with the final label
+            if (this.deltaSpinner) {
+              this.deltaSpinner.stop();
+              this.deltaSpinner = null;
+              this.pendingDeltaLine = false;
+            } else if (this.currentToolName) {
+              this.endToolIndicator();
+            }
             toolCalls.push(chunk.toolCall);
             const label = formatToolCall(chunk.toolCall.name, chunk.toolCall.arguments ?? '{}');
-            process.stderr.write(chalk.yellow(`\n  ⚙ ${label}\n`));
+            process.stderr.write(`  ${chalk.green('●')} ${chalk.white(label)}\n`);
+            this.currentToolName = null;
           }
           break;
 
@@ -81,19 +141,142 @@ export class Renderer {
           break;
 
         case 'error':
+          this.stopThinkingSpinner();
           process.stderr.write(chalk.red(`\nError: ${chunk.error}\n`));
           break;
 
         case 'done':
+          this.stopThinkingSpinner();
+          if (this.deltaSpinner) {
+            this.deltaSpinner.stop();
+            this.deltaSpinner = null;
+          }
           if (this.currentToolName) this.endToolIndicator();
           break;
       }
     }
 
-    // Ensure newline after streaming text
+    // Flush any remaining markdown buffer and add trailing newline
+    this.mdWriter?.flush();
+    this.mdWriter = null;
     process.stdout.write('\n');
 
     return { toolCalls, usage, fullText };
+  }
+
+  /**
+   * Start an animated spinner for tool execution (green braille dots).
+   * Returns the Spinner instance so the caller can stop it.
+   */
+  startToolSpinner(label: string): Spinner {
+    const spinner = new Spinner(chalk.white(label), chalk.green);
+    spinner.start();
+    return spinner;
+  }
+
+  /**
+   * Replace the spinner with a completed indicator (dark grey + runtime).
+   */
+  completeToolExecution(label: string, durationMs: number): void {
+    const dur = formatDuration(durationMs);
+    process.stderr.write(
+      `  ${chalk.gray('✓')} ${chalk.gray(label)} ${chalk.gray.dim(`(${dur})`)}\n`,
+    );
+  }
+
+  /**
+   * Replace the spinner with a denied marker (red ✗).
+   */
+  deniedToolExecution(label: string): void {
+    process.stderr.write(
+      `  ${chalk.red('✗')} ${chalk.red(label)} ${chalk.red.dim('denied')}\n`,
+    );
+  }
+
+  /**
+   * Render git diff output with proper diff coloring.
+   * Lines starting with + → green bg, - → red bg, @@ → cyan, etc.
+   */
+  showGitDiff(output: string): void {
+    if (!output.trim()) return;
+
+    const maxLines = 80;
+    const lines = output.split('\n');
+    const display = lines.slice(0, maxLines);
+
+    process.stderr.write('\n');
+    for (const line of display) {
+      if (line.startsWith('+++') || line.startsWith('---')) {
+        // File headers
+        process.stderr.write(chalk.bold.white(line) + '\n');
+      } else if (line.startsWith('+')) {
+        process.stderr.write(chalk.bgGreen.black(line) + '\n');
+      } else if (line.startsWith('-')) {
+        process.stderr.write(chalk.bgRedBright.black(line) + '\n');
+      } else if (line.startsWith('@@')) {
+        process.stderr.write(chalk.cyan(line) + '\n');
+      } else if (line.startsWith('diff ')) {
+        process.stderr.write(chalk.bold.yellow(line) + '\n');
+      } else if (line.startsWith('index ')) {
+        process.stderr.write(chalk.gray(line) + '\n');
+      } else {
+        process.stderr.write(chalk.gray(line) + '\n');
+      }
+    }
+    if (lines.length > maxLines) {
+      process.stderr.write(chalk.gray(`  ... ${lines.length - maxLines} more lines\n`));
+    }
+    process.stderr.write('\n');
+  }
+
+  /**
+   * Show a diff snippet for file mutations (write/edit).
+   *
+   * For edit: shows removed lines (old_string) in red and added lines (new_string) in green.
+   * For write: shows all content as added lines.
+   */
+  showDiff(
+    filePath: string,
+    oldContent: string | null,
+    newContent: string,
+  ): void {
+    const maxLines = 30; // Cap diff output
+
+    process.stderr.write(chalk.gray(`  ── ${filePath} ──\n`));
+
+    if (oldContent === null) {
+      // New file / full write — show all as additions (capped)
+      const lines = newContent.split('\n');
+      const display = lines.slice(0, maxLines);
+      for (const line of display) {
+        process.stderr.write(chalk.bgGreen.black(` + ${line}`) + '\n');
+      }
+      if (lines.length > maxLines) {
+        process.stderr.write(chalk.gray(`  ... ${lines.length - maxLines} more lines\n`));
+      }
+    } else {
+      // Edit — show removed and added
+      const oldLines = oldContent.split('\n');
+      const newLines = newContent.split('\n');
+
+      let shown = 0;
+      for (const line of oldLines) {
+        if (shown >= maxLines) break;
+        process.stderr.write(chalk.bgRedBright.black(` - ${line}`) + '\n');
+        shown++;
+      }
+      for (const line of newLines) {
+        if (shown >= maxLines) break;
+        process.stderr.write(chalk.bgGreen.black(` + ${line}`) + '\n');
+        shown++;
+      }
+      const total = oldLines.length + newLines.length;
+      if (total > maxLines) {
+        process.stderr.write(chalk.gray(`  ... ${total - maxLines} more lines\n`));
+      }
+    }
+
+    process.stderr.write('\n');
   }
 
   showTokenUsage(
@@ -141,7 +324,28 @@ export class Renderer {
     );
   }
 
+  private stopThinkingSpinner(): void {
+    if (this.thinkingSpinner) {
+      this.thinkingSpinner.stop();
+      this.thinkingSpinner = null;
+    }
+  }
+
   private endToolIndicator(): void {
+    if (this.pendingDeltaLine) {
+      if (this.deltaSpinner) {
+        this.deltaSpinner.stop();
+        this.deltaSpinner = null;
+      }
+      this.pendingDeltaLine = false;
+    }
     this.currentToolName = null;
   }
+}
+
+// ── Helpers ──────────────────────────────────────────────────────────────────
+
+function formatDuration(ms: number): string {
+  if (ms < 1000) return `${Math.round(ms)}ms`;
+  return `${(ms / 1000).toFixed(1)}s`;
 }

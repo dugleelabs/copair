@@ -1,5 +1,12 @@
 import { createInterface, type Interface } from 'node:readline';
+import { readFileSync, writeFileSync, mkdirSync } from 'node:fs';
+import { join } from 'node:path';
+import { homedir } from 'node:os';
 import chalk from 'chalk';
+import { printBanner } from './banner.js';
+
+const HISTORY_FILE = join(homedir(), '.copair', 'history');
+const MAX_HISTORY = 500;
 
 export interface ReplCallbacks {
   onMessage: (input: string) => Promise<void>;
@@ -12,10 +19,15 @@ export class Repl {
   private callbacks: ReplCallbacks;
   private modelName: string;
   private running = false;
+  private exited = false;
+  private ctrlCCount = 0;
+  private ctrlCTimer: ReturnType<typeof setTimeout> | null = null;
+  private history: string[] = [];
 
   constructor(callbacks: ReplCallbacks, modelName: string) {
     this.callbacks = callbacks;
     this.modelName = modelName;
+    this.history = loadHistory();
   }
 
   setModel(name: string): void {
@@ -29,26 +41,25 @@ export class Repl {
   async start(): Promise<void> {
     this.running = true;
 
-    this.rl = createInterface({
-      input: process.stdin,
-      output: process.stdout,
-      terminal: true,
-    });
+    this.rl = this.createRL();
 
-    console.log(chalk.bold(`copair`) + chalk.gray(` — model: ${this.modelName}`));
-    console.log(chalk.gray('Type /help for commands, Ctrl+D to exit.\n'));
-
-    this.rl.on('close', async () => {
-      this.running = false;
-      await this.callbacks.onExit();
-    });
+    printBanner(this.modelName);
+    this.attachHandlers();
 
     while (this.running) {
       const input = await this.readline();
-      if (input === null) break;
+      if (input === null) {
+        // readline was destroyed — loop will re-check this.running
+        continue;
+      }
 
       const trimmed = input.trim();
       if (!trimmed) continue;
+
+      // Persist to history
+      this.history.unshift(trimmed);
+      if (this.history.length > MAX_HISTORY) this.history.length = MAX_HISTORY;
+      saveHistory(this.history);
 
       if (trimmed.startsWith('/')) {
         const spaceIdx = trimmed.indexOf(' ');
@@ -59,11 +70,85 @@ export class Repl {
         await this.callbacks.onMessage(trimmed);
       }
     }
+
+    await this.doExit();
+  }
+
+  stop(): void {
+    this.running = false;
+    this.clearCtrlCTimer();
+    this.rl?.close();
+  }
+
+  // ── Private ─────────────────────────────────────────────────────────────
+
+  private attachHandlers(): void {
+    if (!this.rl) return;
+
+    // ── Ctrl+C: require 2 presses within 2s ───────────────────────────
+    this.rl.on('SIGINT', () => {
+      this.ctrlCCount++;
+      if (this.ctrlCCount >= 2) {
+        this.clearCtrlCTimer();
+        process.stdout.write('\n');
+        this.stop();
+        return;
+      }
+      process.stdout.write(chalk.yellow('\n  Press Ctrl+C again to exit (or /exit)\n'));
+      this.rl?.prompt();
+      this.resetCtrlCTimer();
+    });
+
+    // ── Ctrl+D / EOF: same two-press behaviour ────────────────────────
+    this.rl.on('close', () => {
+      if (!this.running) return; // intentional stop() — don't interfere
+      this.ctrlCCount++;
+      if (this.ctrlCCount >= 2) {
+        this.clearCtrlCTimer();
+        this.running = false;
+        return;
+      }
+      process.stdout.write(chalk.yellow('\n  Press Ctrl+C or Ctrl+D again to exit (or /exit)\n'));
+      // Re-create readline so the REPL keeps running
+      this.rl = this.createRL();
+      this.attachHandlers();
+      this.resetCtrlCTimer();
+    });
+  }
+
+  private resetCtrlCTimer(): void {
+    this.clearCtrlCTimer();
+    this.ctrlCTimer = setTimeout(() => {
+      this.ctrlCCount = 0;
+    }, 2000);
+  }
+
+  private clearCtrlCTimer(): void {
+    if (this.ctrlCTimer) {
+      clearTimeout(this.ctrlCTimer);
+      this.ctrlCTimer = null;
+    }
+  }
+
+  private async doExit(): Promise<void> {
+    if (this.exited) return;
+    this.exited = true;
+    await this.callbacks.onExit();
+  }
+
+  private createRL(): Interface {
+    return createInterface({
+      input: process.stdin,
+      output: process.stdout,
+      terminal: true,
+      history: [...this.history],
+      historySize: MAX_HISTORY,
+    });
   }
 
   private readline(): Promise<string | null> {
     return new Promise((resolve) => {
-      if (!this.rl) {
+      if (!this.rl || !this.running) {
         resolve(null);
         return;
       }
@@ -72,9 +157,26 @@ export class Repl {
       });
     });
   }
+}
 
-  stop(): void {
-    this.running = false;
-    this.rl?.close();
+// ── History persistence ─────────────────────────────────────────────────────
+
+function loadHistory(): string[] {
+  try {
+    return readFileSync(HISTORY_FILE, 'utf-8')
+      .split('\n')
+      .filter(Boolean)
+      .slice(0, MAX_HISTORY);
+  } catch {
+    return [];
+  }
+}
+
+function saveHistory(history: string[]): void {
+  try {
+    mkdirSync(join(homedir(), '.copair'), { recursive: true });
+    writeFileSync(HISTORY_FILE, history.join('\n') + '\n');
+  } catch {
+    // Non-critical — silently ignore
   }
 }

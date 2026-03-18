@@ -1,5 +1,6 @@
 import { createInterface, type Interface } from 'node:readline';
 import chalk from 'chalk';
+import { printBanner } from './banner.js';
 
 export interface ReplCallbacks {
   onMessage: (input: string) => Promise<void>;
@@ -35,8 +36,7 @@ export class Repl {
       terminal: true,
     });
 
-    console.log(chalk.bold(`copair`) + chalk.gray(` — model: ${this.modelName}`));
-    console.log(chalk.gray('Type /help for commands, Ctrl+D to exit.\n'));
+    printBanner(this.modelName);
 
     this.rl.on('close', async () => {
       this.running = false;

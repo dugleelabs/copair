@@ -1,7 +1,7 @@
 import { parseArgs } from './cli/args.js';
 import { Repl } from './cli/repl.js';
 import { Agent } from './core/agent.js';
-import { loadConfig } from './config/loader.js';
+import { loadConfig, resolveEnvVarString } from './config/loader.js';
 import { detectGitContext } from './core/git-context.js';
 import {
   ProviderRegistry,
@@ -45,6 +45,11 @@ function resolveModel(
   );
 }
 
+function resolveProviderConfig(config: ProviderConfig): ProviderConfig {
+  if (!config.api_key) return config;
+  return { ...config, api_key: resolveEnvVarString(config.api_key) };
+}
+
 function getProviderType(
   providerName: string,
   providerConfig: ProviderConfig,
@@ -74,7 +79,7 @@ async function main() {
   providerRegistry.register('openai-compatible', createOpenAICompatibleProvider);
 
   const providerType = getProviderType(providerName, providerConfig);
-  const provider = providerRegistry.resolve(providerType, providerConfig, modelAlias);
+  const provider = providerRegistry.resolve(providerType, resolveProviderConfig(providerConfig), modelAlias);
 
   // Set up tools
   const toolRegistry = createDefaultToolRegistry(config);
@@ -178,7 +183,7 @@ async function main() {
             const newProviderType = getProviderType(newProviderName, newProviderConfig);
             const newProvider = providerRegistry.resolve(
               newProviderType,
-              newProviderConfig,
+              resolveProviderConfig(newProviderConfig),
               targetModel,
             );
             await agent.switchModel(newProvider, targetModel);

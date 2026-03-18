@@ -2,7 +2,7 @@ import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
 import { writeFileSync, mkdirSync, rmSync } from 'node:fs';
 import { join } from 'node:path';
 import { tmpdir } from 'node:os';
-import { loadConfig } from '../../src/config/loader.js';
+import { loadConfig, resolveEnvVarString } from '../../src/config/loader.js';
 
 describe('loadConfig', () => {
   const testDir = join(tmpdir(), 'copair-test-config-' + Date.now());
@@ -101,7 +101,7 @@ providers:
     expect(config.providers.openai.api_key).toBe('sk-from-env');
   });
 
-  it('throws on missing environment variable', () => {
+  it('preserves unresolved ${VAR} templates for missing env vars at load time', () => {
     writeFileSync(
       join(globalDir, 'config.yaml'),
       `version: 1
@@ -114,7 +114,14 @@ providers:
 `,
     );
 
-    expect(() => loadConfig(projectDir)).toThrow(
+    // Config loads successfully — missing vars are kept as raw templates so that
+    // unused providers don't block startup.
+    const config = loadConfig(projectDir);
+    expect(config.providers.openai.api_key).toBe('${NONEXISTENT_VAR_12345}');
+  });
+
+  it('resolveEnvVarString throws on missing environment variable', () => {
+    expect(() => resolveEnvVarString('${NONEXISTENT_VAR_12345}')).toThrow(
       'Environment variable "NONEXISTENT_VAR_12345" is not set',
     );
   });

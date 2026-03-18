@@ -1,6 +1,38 @@
 import chalk from 'chalk';
 import type { StreamChunk } from '../providers/interface.js';
 
+/**
+ * Build a human-readable one-liner for a tool call, e.g.:
+ *   git status
+ *   bash: npm test
+ *   read: src/index.ts
+ */
+function formatToolCall(name: string, argsJson: string): string {
+  try {
+    const args = JSON.parse(argsJson) as Record<string, unknown>;
+    switch (name) {
+      case 'git':
+        return `git ${args.args ?? ''}`.trim();
+      case 'bash':
+        return `bash: ${String(args.command ?? '').slice(0, 80)}`;
+      case 'read':
+        return `read: ${args.file_path ?? args.path ?? ''}`;
+      case 'write':
+        return `write: ${args.file_path ?? args.path ?? ''}`;
+      case 'edit':
+        return `edit: ${args.file_path ?? args.path ?? ''}`;
+      case 'glob':
+        return `glob: ${args.pattern ?? ''}`;
+      case 'grep':
+        return `grep: ${args.pattern ?? ''}`;
+      default:
+        return name;
+    }
+  } catch {
+    return name;
+  }
+}
+
 export class Renderer {
   private currentToolName: string | null = null;
 
@@ -37,9 +69,8 @@ export class Renderer {
           if (chunk.toolCall) {
             if (this.currentToolName) this.endToolIndicator();
             toolCalls.push(chunk.toolCall);
-            process.stderr.write(
-              chalk.yellow(`\n  ⚙ ${chunk.toolCall.name}\n`),
-            );
+            const label = formatToolCall(chunk.toolCall.name, chunk.toolCall.arguments ?? '{}');
+            process.stderr.write(chalk.yellow(`\n  ⚙ ${label}\n`));
           }
           break;
 

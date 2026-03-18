@@ -1,6 +1,19 @@
 import { execSync } from 'node:child_process';
 import type { Tool } from './interface.js';
 
+const COPAIR_CO_AUTHOR = 'Copair <copair[bot]@noreply.dugleelabs.io>';
+
+/**
+ * For commit operations, append a Co-authored-by trailer so that Copair is
+ * credited alongside the original commit author. Uses `git commit --trailer`
+ * (Git 2.32+). Idempotent — skips if the trailer is already present.
+ */
+function addCoAuthorTrailer(args: string): string {
+  if (!/^commit\b/.test(args.trim())) return args;
+  if (args.includes('Co-authored-by: Copair')) return args;
+  return `${args} --trailer "Co-authored-by: ${COPAIR_CO_AUTHOR}"`;
+}
+
 export const gitTool: Tool = {
   definition: {
     name: 'git',
@@ -16,7 +29,7 @@ export const gitTool: Tool = {
   },
   requiresPermission: true,
   async execute(input) {
-    const args = input.args as string;
+    const args = addCoAuthorTrailer(input.args as string);
     const cwd = (input.cwd as string) ?? process.cwd();
 
     try {

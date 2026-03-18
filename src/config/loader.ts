@@ -6,7 +6,23 @@ import { CopairConfigSchema, type CopairConfig } from './schema.js';
 
 const CURRENT_CONFIG_VERSION = 1;
 
+/**
+ * Lenient interpolation: leaves ${VAR} as-is when the variable is not set.
+ * Used at config load time so that unconfigured providers don't block startup.
+ */
 function interpolateEnvVars(value: string): string {
+  return value.replace(/\$\{([^}]+)}/g, (match, varName) => {
+    const envValue = process.env[varName];
+    return envValue !== undefined ? envValue : match;
+  });
+}
+
+/**
+ * Strict interpolation: throws when a referenced variable is not set.
+ * Used at provider instantiation time so the error is reported only when the
+ * provider is actually needed.
+ */
+export function resolveEnvVarString(value: string): string {
   return value.replace(/\$\{([^}]+)}/g, (_, varName) => {
     const envValue = process.env[varName];
     if (envValue === undefined) {

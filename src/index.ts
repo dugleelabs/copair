@@ -1,7 +1,7 @@
 import { parseArgs } from './cli/args.js';
 import { Repl } from './cli/repl.js';
 import { Agent } from './core/agent.js';
-import { loadConfig } from './config/loader.js';
+import { loadConfig, resolveEnvVarString } from './config/loader.js';
 import { detectGitContext } from './core/git-context.js';
 import {
   ProviderRegistry,
@@ -45,6 +45,11 @@ function resolveModel(
   );
 }
 
+function resolveProviderConfig(config: ProviderConfig): ProviderConfig {
+  if (!config.api_key) return config;
+  return { ...config, api_key: resolveEnvVarString(config.api_key) };
+}
+
 function getProviderType(
   providerName: string,
   providerConfig: ProviderConfig,
@@ -74,7 +79,7 @@ async function main() {
   providerRegistry.register('openai-compatible', createOpenAICompatibleProvider);
 
   const providerType = getProviderType(providerName, providerConfig);
-  const provider = providerRegistry.resolve(providerType, providerConfig, modelAlias);
+  const provider = providerRegistry.resolve(providerType, resolveProviderConfig(providerConfig), modelAlias);
 
   // Set up tools
   const toolRegistry = createDefaultToolRegistry(config);
@@ -109,7 +114,21 @@ async function main() {
   const agent = new Agent(provider, modelAlias, toolRegistry, {
     systemPrompt:
       'You are Copair, an AI coding assistant. Help the user with software development tasks. ' +
-      'You have access to tools for reading, writing, and editing files, searching code, and running commands.',
+      'You have access to tools for reading, writing, and editing files, searching code, and running commands.\n\n' +
+      'Git conventions to follow:\n' +
+      '- Branch names must include a type prefix and a short description: <type>/<kebab-case-description>\n' +
+      '  Valid types: feat, fix, chore, docs, refactor, test, perf\n' +
+      '  Examples: fix/auth-token-expiry, feat/dark-mode, chore/update-deps\n' +
+      '  Never use bare names like "fix", "feature", "patch" without a description.\n' +
+      '- Commit messages must follow this structure:\n' +
+      '    <type>(<scope>): <short imperative subject — max 72 chars>\n' +
+      '    \n' +
+      '    <body: 2–5 bullet points summarising what changed and why>\n' +
+      '    \n' +
+      '    Co-authored-by: Copair <copair[bot]@noreply.dugleelabs.io>\n' +
+      '  Valid types: feat, fix, chore, docs, refactor, test, perf\n' +
+      '  The Co-authored-by trailer is added automatically by the git tool — do not omit it.\n' +
+      '  The body is required: always explain what changed and why, even for small commits.',
   });
 
   // Restore previous session if user accepted recovery
@@ -178,7 +197,7 @@ async function main() {
             const newProviderType = getProviderType(newProviderName, newProviderConfig);
             const newProvider = providerRegistry.resolve(
               newProviderType,
-              newProviderConfig,
+              resolveProviderConfig(newProviderConfig),
               targetModel,
             );
             await agent.switchModel(newProvider, targetModel);

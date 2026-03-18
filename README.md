@@ -57,7 +57,8 @@ copair --verbose          # show INFO/WARN logs
 copair --debug            # show all logs including DEBUG
 ```
 
-→ [Full configuration reference](docs/configuration.md)
+→ [Full configuration reference](docs/configuration.md)  
+→ [Local models setup (Qwen 3.5, etc.)](docs/local-models.md)
 
 ## Built-in Tools
 

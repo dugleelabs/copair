@@ -53,6 +53,8 @@ export interface ParsedToolCall {
  *   1. ```tool_call ... ```  — canonical format
  *   2. ```json ... ```       — common fallback from smaller models
  *   3. ``` ... ```           — bare fenced code blocks containing tool JSON
+ *   4. <tool_call> ... </tool_call>  — Qwen-style XML tags
+ *   5. <｜DSML｜function_calls> ... </｜DSML｜function_calls>  — DeepSeek DSML format
  *
  * A JSON object is treated as a tool call if it has a "name" field that
  * matches a known tool name pattern (short lowercase identifier).
@@ -63,6 +65,12 @@ export function parseToolCallsFromText(text: string): {
 } {
   const toolCalls: ParsedToolCall[] = [];
   let remainingText = text;
+
+  // Try DeepSeek DSML format first — it has its own structured parser
+  const dsmlResult = parseDsmlToolCalls(text);
+  if (dsmlResult.toolCalls.length > 0) {
+    return dsmlResult;
+  }
 
   // Patterns models commonly emit (ordered by specificity):
   //   1. ```tool_call ... ```   — canonical
@@ -85,6 +93,84 @@ export function parseToolCallsFromText(text: string): {
         remainingText = remainingText.replace(match[0], '');
       }
     }
+  }
+
+  return { toolCalls, remainingText: remainingText.trim() };
+}
+
+// ── DeepSeek DSML format ──────────────────────────────────────────────
+// DeepSeek V3+ models sometimes emit tool calls in their native DSML
+// markup even when accessed through the OpenAI-compatible API. The format
+// uses fullwidth pipe characters (U+FF5C) as delimiters:
+//
+//   <｜DSML｜function_calls>
+//   <｜DSML｜invoke name="read">
+//   <｜DSML｜parameter name="file_path" string="true">/path/to/file<｜DSML｜parameter>
+//   </｜DSML｜invoke>
+//   </｜DSML｜function_calls>
+
+// Match both fullwidth (｜) and ASCII (|) pipes — some tokenizers normalize them
+const DSML_BLOCK_RE =
+  /<[｜|]DSML[｜|]function_calls>\s*([\s\S]*?)<\/[｜|]DSML[｜|]function_calls>/g;
+const DSML_INVOKE_RE =
+  /<[｜|]DSML[｜|]invoke\s+name="([^"]+)">\s*([\s\S]*?)<\/[｜|]DSML[｜|]invoke>/g;
+const DSML_PARAM_RE =
+  /<[｜|]DSML[｜|]parameter\s+name="([^"]+)"(?:\s+string="([^"]*)")?\s*>([\s\S]*?)<[｜|]DSML[｜|]parameter>/g;
+
+// Unclosed DSML block — model omitted closing tag
+const DSML_BLOCK_UNCLOSED_RE =
+  /<[｜|]DSML[｜|]function_calls>\s*([\s\S]*?)$/g;
+
+function parseDsmlToolCalls(text: string): {
+  toolCalls: ParsedToolCall[];
+  remainingText: string;
+} {
+  const toolCalls: ParsedToolCall[] = [];
+  let remainingText = text;
+
+  // Try closed blocks first, then unclosed
+  for (const blockRegex of [DSML_BLOCK_RE, DSML_BLOCK_UNCLOSED_RE]) {
+    blockRegex.lastIndex = 0;
+    let blockMatch: RegExpExecArray | null;
+    while ((blockMatch = blockRegex.exec(text)) !== null) {
+      const blockBody = blockMatch[1];
+      remainingText = remainingText.replace(blockMatch[0], '');
+
+      DSML_INVOKE_RE.lastIndex = 0;
+      let invokeMatch: RegExpExecArray | null;
+      while ((invokeMatch = DSML_INVOKE_RE.exec(blockBody)) !== null) {
+        const toolName = invokeMatch[1];
+        const invokeBody = invokeMatch[2];
+        const args: Record<string, unknown> = {};
+
+        DSML_PARAM_RE.lastIndex = 0;
+        let paramMatch: RegExpExecArray | null;
+        while ((paramMatch = DSML_PARAM_RE.exec(invokeBody)) !== null) {
+          const paramName = paramMatch[1];
+          const isString = paramMatch[2] === 'true';
+          const rawValue = paramMatch[3];
+
+          if (isString) {
+            args[paramName] = rawValue;
+          } else {
+            // Try JSON parse for objects/arrays/numbers, fall back to string
+            try {
+              args[paramName] = JSON.parse(rawValue);
+            } catch {
+              args[paramName] = rawValue;
+            }
+          }
+        }
+
+        toolCalls.push({
+          id: `call_${Math.random().toString(36).slice(2, 9)}`,
+          name: toolName,
+          arguments: JSON.stringify(args),
+        });
+      }
+    }
+
+    if (toolCalls.length > 0) break;
   }
 
   return { toolCalls, remainingText: remainingText.trim() };

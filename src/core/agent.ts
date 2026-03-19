@@ -127,9 +127,12 @@ export class Agent {
 
       const { toolCalls: nativeToolCalls, usage, fullText } = await this.renderer.render(stream);
 
-      // For non-tool-calling models, parse tool invocations from text output
+      // Parse tool invocations from text output.
+      // Always attempted when native tool calls are empty and text is present —
+      // some providers (e.g. DeepSeek) leak their native markup (DSML) into
+      // text content even when using the OpenAI-compatible tool calling API.
       let toolCalls = nativeToolCalls;
-      if (!this.provider.supportsToolCalling && fullText) {
+      if (nativeToolCalls.length === 0 && fullText) {
         const parsed = parseToolCallsFromText(fullText);
         toolCalls = parsed.toolCalls;
       }

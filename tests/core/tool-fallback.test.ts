@@ -9,7 +9,7 @@ describe('parseToolCallsFromText', () => {
         '',
         '<\uFF5CDSML\uFF5Cfunction_calls>',
         '<\uFF5CDSML\uFF5Cinvoke name="read">',
-        '<\uFF5CDSML\uFF5Cparameter name="file_path" string="true">/src/index.ts<\uFF5CDSML\uFF5Cparameter>',
+        '<\uFF5CDSML\uFF5Cparameter name="file_path" string="true">/src/index.ts</\uFF5CDSML\uFF5Cparameter>',
         '</\uFF5CDSML\uFF5Cinvoke>',
         '</\uFF5CDSML\uFF5Cfunction_calls>',
       ].join('\n');
@@ -26,10 +26,10 @@ describe('parseToolCallsFromText', () => {
       const text = [
         '<\uFF5CDSML\uFF5Cfunction_calls>',
         '<\uFF5CDSML\uFF5Cinvoke name="git">',
-        '<\uFF5CDSML\uFF5Cparameter name="args" string="true">status<\uFF5CDSML\uFF5Cparameter>',
+        '<\uFF5CDSML\uFF5Cparameter name="args" string="true">status</\uFF5CDSML\uFF5Cparameter>',
         '</\uFF5CDSML\uFF5Cinvoke>',
         '<\uFF5CDSML\uFF5Cinvoke name="read">',
-        '<\uFF5CDSML\uFF5Cparameter name="file_path" string="true">package.json<\uFF5CDSML\uFF5Cparameter>',
+        '<\uFF5CDSML\uFF5Cparameter name="file_path" string="true">package.json</\uFF5CDSML\uFF5Cparameter>',
         '</\uFF5CDSML\uFF5Cinvoke>',
         '</\uFF5CDSML\uFF5Cfunction_calls>',
       ].join('\n');
@@ -44,8 +44,8 @@ describe('parseToolCallsFromText', () => {
       const text = [
         '<\uFF5CDSML\uFF5Cfunction_calls>',
         '<\uFF5CDSML\uFF5Cinvoke name="bash">',
-        '<\uFF5CDSML\uFF5Cparameter name="command" string="true">npm test<\uFF5CDSML\uFF5Cparameter>',
-        '<\uFF5CDSML\uFF5Cparameter name="timeout">60000<\uFF5CDSML\uFF5Cparameter>',
+        '<\uFF5CDSML\uFF5Cparameter name="command" string="true">npm test</\uFF5CDSML\uFF5Cparameter>',
+        '<\uFF5CDSML\uFF5Cparameter name="timeout">60000</\uFF5CDSML\uFF5Cparameter>',
         '</\uFF5CDSML\uFF5Cinvoke>',
         '</\uFF5CDSML\uFF5Cfunction_calls>',
       ].join('\n');
@@ -61,7 +61,7 @@ describe('parseToolCallsFromText', () => {
       const text = [
         '<\uFF5CDSML\uFF5Cfunction_calls>',
         '<\uFF5CDSML\uFF5Cinvoke name="git">',
-        '<\uFF5CDSML\uFF5Cparameter name="args" string="true">diff --cached<\uFF5CDSML\uFF5Cparameter>',
+        '<\uFF5CDSML\uFF5Cparameter name="args" string="true">diff --cached</\uFF5CDSML\uFF5Cparameter>',
         '</\uFF5CDSML\uFF5Cinvoke>',
       ].join('\n');
 
@@ -74,7 +74,7 @@ describe('parseToolCallsFromText', () => {
       const text = [
         '<|DSML|function_calls>',
         '<|DSML|invoke name="read">',
-        '<|DSML|parameter name="file_path" string="true">/tmp/test.ts<|DSML|parameter>',
+        '<|DSML|parameter name="file_path" string="true">/tmp/test.ts</|DSML|parameter>',
         '</|DSML|invoke>',
         '</|DSML|function_calls>',
       ].join('\n');

@@ -140,6 +140,8 @@ export class Agent {
         }
       }
 
+
+
       if (usage) {
         totalUsage = totalUsage
           ? {

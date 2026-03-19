@@ -115,7 +115,7 @@ const DSML_BLOCK_RE =
 const DSML_INVOKE_RE =
   /<[｜|]DSML[｜|]invoke\s+name="([^"]+)">\s*([\s\S]*?)<\/[｜|]DSML[｜|]invoke>/g;
 const DSML_PARAM_RE =
-  /<[｜|]DSML[｜|]parameter\s+name="([^"]+)"(?:\s+string="([^"]*)")?\s*>([\s\S]*?)<[｜|]DSML[｜|]parameter>/g;
+  /<[｜|]DSML[｜|]parameter\s+name="([^"]+)"(?:\s+string="([^"]*)")?\s*>([\s\S]*?)<\/?[｜|]DSML[｜|]parameter>/g;
 
 // Unclosed DSML block — model omitted closing tag
 const DSML_BLOCK_UNCLOSED_RE =

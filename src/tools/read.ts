@@ -22,7 +22,7 @@ export const readTool: Tool = {
     const limit = input.limit as number | undefined;
 
     if (!existsSync(filePath)) {
-      return { content: `Error: File not found: ${filePath}`, isError: true };
+      return { content: `Error: File not found: ${filePath}. Working directory is ${process.cwd()}/ — use absolute paths.`, isError: true };
     }
 
     try {

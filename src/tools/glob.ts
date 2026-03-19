@@ -1,4 +1,5 @@
 import { globSync } from 'node:fs';
+import { resolve } from 'node:path';
 import type { Tool } from './interface.js';
 
 export const globTool: Tool = {
@@ -22,9 +23,11 @@ export const globTool: Tool = {
     try {
       const matches = globSync(pattern, { cwd, nodir: true });
       if (matches.length === 0) {
-        return { content: 'No files found.' };
+        return { content: `No files found matching "${pattern}" in ${cwd}` };
       }
-      return { content: matches.sort().join('\n') };
+      // Return absolute paths so models can pass them directly to read/edit
+      const absolute = matches.map((m) => resolve(cwd, m)).sort();
+      return { content: absolute.join('\n') };
     } catch (err) {
       return { content: `Error: ${(err as Error).message}`, isError: true };
     }

@@ -1,3 +1,4 @@
+import { join } from 'node:path';
 import { parseArgs } from './cli/args.js';
 import { Repl } from './cli/repl.js';
 import { Agent } from './core/agent.js';
@@ -115,6 +116,10 @@ async function main() {
   if (firstInit) {
     console.log('Initialized .copair/ for this project. Config: .copair.yaml');
   }
+
+  // Trust .copair/ directory so scaffolding writes skip approval (even in deny mode)
+  gate.addTrustedPath(join(process.cwd(), '.copair'));
+  gate.addTrustedPath(join(process.cwd(), '.copair.yaml'));
 
   // Detect git context
   const gitCtx = detectGitContext(process.cwd());

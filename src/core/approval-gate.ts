@@ -1,3 +1,4 @@
+import { resolve as resolvePath } from 'node:path';
 import chalk from 'chalk';
 import type { AllowList } from './allow-list.js';
 
@@ -45,10 +46,30 @@ export class ApprovalGate {
   // allowing "git commit".
   private alwaysAllow = new Set<string>();
   private allowList: AllowList | null;
+  // Trusted path prefixes — file mutations under these paths skip approval
+  private trustedPaths = new Set<string>();
 
   constructor(mode: GateMode = 'ask', allowList: AllowList | null = null) {
     this.mode = mode;
     this.allowList = allowList;
+  }
+
+  /** Register a path as trusted. File mutations under/at this path skip approval. */
+  addTrustedPath(path: string): void {
+    this.trustedPaths.add(resolvePath(path));
+  }
+
+  /** Check if a tool call targets a trusted path. Only applies to write/edit tools. */
+  isTrustedPath(toolName: string, input: Record<string, unknown>): boolean {
+    if (toolName !== 'write' && toolName !== 'edit') return false;
+    const filePath = input.file_path;
+    if (typeof filePath !== 'string') return false;
+    const abs = resolvePath(filePath);
+    for (const trusted of this.trustedPaths) {
+      // Exact match (e.g., .copair.yaml) or directory prefix (e.g., .copair/)
+      if (abs === trusted || abs.startsWith(trusted + '/')) return true;
+    }
+    return false;
   }
 
   classify(toolName: string, input: Record<string, unknown>): RiskLevel {
@@ -65,6 +86,8 @@ export class ApprovalGate {
    * sees the resulting ExecutionResult.
    */
   async allow(toolName: string, input: Record<string, unknown>): Promise<boolean> {
+    // Trusted paths bypass even deny mode — scaffolding writes must always work
+    if (this.isTrustedPath(toolName, input)) return true;
     if (this.mode === 'deny') return false;
     if (this.classify(toolName, input) === 'safe') return true;
     if (this.mode === 'auto-approve') return true;

@@ -64,7 +64,10 @@ export class Renderer {
   private deltaSpinner: Spinner | null = null;
   private mdWriter: MarkdownWriter | null = null;
 
-  async render(stream: AsyncIterableIterator<StreamChunk>): Promise<{
+  async render(
+    stream: AsyncIterableIterator<StreamChunk>,
+    textFilter?: (text: string) => string,
+  ): Promise<{
     toolCalls: Array<{ id: string; name: string; arguments: string }>;
     usage: { inputTokens: number; outputTokens: number } | null;
     fullText: string;
@@ -82,7 +85,7 @@ export class Renderer {
 
     for await (const chunk of stream) {
       switch (chunk.type) {
-        case 'text':
+        case 'text': {
           this.stopThinkingSpinner();
           if (this.deltaSpinner) {
             this.deltaSpinner.stop();
@@ -91,9 +94,12 @@ export class Renderer {
           if (this.currentToolName) {
             this.endToolIndicator();
           }
-          this.mdWriter.write(chunk.text ?? '');
-          fullText += chunk.text ?? '';
+          const raw = chunk.text ?? '';
+          const display = textFilter ? textFilter(raw) : raw;
+          if (display) this.mdWriter.write(display);
+          fullText += raw; // raw kept for parser
           break;
+        }
 
         case 'tool_call_delta':
           this.stopThinkingSpinner();

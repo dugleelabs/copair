@@ -6,6 +6,7 @@ export const ModelConfigSchema = z.object({
   context_window: z.number().positive().optional(),
   supports_tool_calling: z.boolean().optional(),
   supports_streaming: z.boolean().optional(),
+  tool_call_format: z.enum(['dsml', 'qwen-xml', 'fenced-block']).optional(),
 });
 
 export const ProviderConfigSchema = z.object({

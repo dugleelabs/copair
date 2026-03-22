@@ -5,11 +5,15 @@ import { ConversationManager } from './conversation.js';
 import { ContextWindowManager } from './context-window.js';
 import { Renderer, formatToolCallFromInput } from '../cli/renderer.js';
 import { buildToolSystemPrompt, parseToolCallsFromText } from './tool-fallback.js';
+import type { ToolCallFormatter } from './formats/interface.js';
+import type { FormatName } from './formats/index.js';
+import { resolveFormatter, buildTextFilter } from './formats/index.js';
 
 export interface AgentOptions {
   systemPrompt?: string;
   maxTokens?: number;
   temperature?: number;
+  toolCallFormat?: FormatName;
 }
 
 export class Agent {
@@ -21,6 +25,8 @@ export class Agent {
   private renderer: Renderer;
   private options: AgentOptions;
   private _model: string;
+  private formatter: ToolCallFormatter;
+  private textFilter: (text: string) => string;
 
   constructor(
     provider: Provider,
@@ -37,6 +43,8 @@ export class Agent {
     this.contextWindow = new ContextWindowManager(provider.maxContextWindow);
     this.renderer = new Renderer();
     this.options = options;
+    this.formatter = resolveFormatter(provider.name, model, options.toolCallFormat);
+    this.textFilter = buildTextFilter(this.formatter);
   }
 
   get model(): string {
@@ -89,6 +97,8 @@ export class Agent {
     this.provider = newProvider;
     this._model = newModel;
     this.contextWindow = new ContextWindowManager(newProvider.maxContextWindow);
+    this.formatter = resolveFormatter(newProvider.name, newModel, this.options.toolCallFormat);
+    this.textFilter = buildTextFilter(this.formatter);
   }
 
   async handleMessage(userInput: string): Promise<{
@@ -109,9 +119,10 @@ export class Agent {
       const tools = this.provider.supportsToolCalling ? allTools : [];
 
       // For non-tool-calling models, inject tool descriptions into the system prompt
+      // using the resolved formatter for the current model
       const toolSystemPrompt =
         !this.provider.supportsToolCalling && allTools.length > 0
-          ? buildToolSystemPrompt(allTools)
+          ? this.formatter.buildSystemPrompt(allTools)
           : undefined;
       const systemPrompt = toolSystemPrompt
         ? [this.options.systemPrompt, toolSystemPrompt].filter(Boolean).join('\n\n')
@@ -125,18 +136,30 @@ export class Agent {
         temperature: this.options.temperature,
       });
 
-      const { toolCalls: nativeToolCalls, usage, fullText } = await this.renderer.render(stream);
+      const { toolCalls: nativeToolCalls, usage, fullText } = await this.renderer.render(
+        stream,
+        this.textFilter,
+      );
 
-      // Parse tool invocations from text output.
+      // Parse tool invocations from text output using the resolved formatter.
       // Some providers (e.g. DeepSeek) leak their native markup (DSML) into
       // text content even when using the OpenAI-compatible tool calling API.
       // We check for leaked tool calls in text whenever text is present,
       // merging them with any native tool calls from the same response.
       let toolCalls = nativeToolCalls;
+      let cleanedText = fullText;
       if (fullText) {
-        const parsed = parseToolCallsFromText(fullText);
+        const parsed = this.formatter.parse(fullText);
         if (parsed.toolCalls.length > 0) {
-          toolCalls = [...nativeToolCalls, ...parsed.toolCalls];
+          // Deduplicate: skip parsed calls whose name+arguments match a native call
+          const nativeKeys = new Set(
+            nativeToolCalls.map((tc) => `${tc.name}:${tc.arguments}`),
+          );
+          const uniqueParsed = parsed.toolCalls.filter(
+            (tc) => !nativeKeys.has(`${tc.name}:${tc.arguments}`),
+          );
+          toolCalls = [...nativeToolCalls, ...uniqueParsed];
+          cleanedText = parsed.remainingText;
         }
       }
 
@@ -153,6 +176,10 @@ export class Agent {
 
       if (toolCalls.length === 0) {
         // Final text response — the text was already streamed by the renderer
+        // If there's cleaned text (after removing markup), append it to conversation
+        if (cleanedText && cleanedText.trim()) {
+          this.conversation.appendText('assistant', cleanedText);
+        }
         break;
       }
 

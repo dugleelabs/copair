@@ -46,6 +46,12 @@ export const IdentityConfigSchema = z.object({
   email: z.string().email().default('copair[bot]@noreply.dugleelabs.io'),
 });
 
+export const ContextConfigSchema = z.object({
+  summarization_model: z.string().optional(),
+  max_sessions: z.number().int().positive().default(20),
+  knowledge_max_size: z.number().int().positive().default(8192),
+});
+
 export const CopairConfigSchema = z.object({
   version: z.number().int().positive(),
   default_model: z.string().optional(),
@@ -55,9 +61,11 @@ export const CopairConfigSchema = z.object({
   mcp_servers: z.array(McpServerConfigSchema).default([]),
   web_search: WebSearchConfigSchema.optional(),
   identity: IdentityConfigSchema.default({ name: 'Copair', email: 'copair[bot]@noreply.dugleelabs.io' }),
+  context: ContextConfigSchema.default({}),
 });
 
 export type CopairConfig = z.infer<typeof CopairConfigSchema>;
 export type ProviderConfig = z.infer<typeof ProviderConfigSchema>;
 export type ModelConfig = z.infer<typeof ModelConfigSchema>;
 export type IdentityConfig = z.infer<typeof IdentityConfigSchema>;
+export type ContextConfig = z.infer<typeof ContextConfigSchema>;

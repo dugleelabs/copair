@@ -14,12 +14,13 @@ import { createDefaultToolRegistry } from './tools/index.js';
 import { McpClientManager, McpBridge } from './mcp/index.js';
 import { CommandRegistry } from './commands/index.js';
 import { createWorkflowCommand } from './commands/builtins/workflow.js';
-import {
-  writeRecovery,
-  deleteRecovery,
-  loadRecovery,
-  promptRecovery,
-} from './core/recovery.js';
+import { SessionManager, resolveSessionsDir, presentSessionPicker, warnIfSessionsTracked } from './core/session.js';
+import { deriveIdentifier } from './core/session-identifier.js';
+import { KnowledgeBase } from './core/knowledge-base.js';
+import { setKnowledgeBase } from './tools/update-knowledge.js';
+import { SessionSummarizer, resolveSummarizationModel } from './core/session-summarizer.js';
+import { setSessionManagerRef } from './commands/builtins/session.js';
+import { ensureProjectInit } from './core/init.js';
 import { checkForUpdates } from './core/version-check.js';
 import { ApprovalGate } from './core/approval-gate.js';
 import { ToolExecutor } from './core/tool-executor.js';
@@ -105,16 +106,19 @@ async function main() {
     });
   }
 
+  // Auto-init .copair/ scaffolding on first launch
+  const firstInit = ensureProjectInit(process.cwd());
+  if (firstInit) {
+    console.log('Initialized .copair/ for this project. Config: .copair.yaml');
+  }
+
   // Detect git context
   const gitCtx = detectGitContext(process.cwd());
 
-  // Check for crash recovery
-  const snapshot = await loadRecovery();
-  let recoverSession = false;
-  if (snapshot) {
-    recoverSession = await promptRecovery(snapshot);
-    await deleteRecovery();
-  }
+  // Initialize knowledge base
+  const knowledgeBase = new KnowledgeBase(process.cwd(), config.context.knowledge_max_size);
+  setKnowledgeBase(knowledgeBase);
+  const kbSection = knowledgeBase.getSystemPromptSection();
 
   // Set up agent
   const agent = new Agent(provider, modelAlias, toolRegistry, executor, {
@@ -130,21 +134,102 @@ async function main() {
       '- If a tool returns an error, adjust your approach — do NOT repeat the same call.\n\n' +
       'Work habits:\n' +
       '- Read before editing. Keep changes minimal.\n' +
-      '- Auto-commit each discrete feature, fix, or refactor. Do not batch unrelated changes.\n\n' +
+      '- Auto-commit each discrete feature, fix, or refactor. Do not batch unrelated changes.\n' +
+      '- When you learn something project-specific (conventions, patterns, architectural decisions), use the update_knowledge tool to record it.\n\n' +
       'Git:\n' +
       '- Branches: <type>/<kebab-desc> (feat, fix, chore, docs, refactor, test, perf)\n' +
       '- Commits: <type>(<scope>): <imperative subject, max 72 chars>\n' +
       '  Body: 2-3 concise bullets. Co-authored-by is auto-appended.\n' +
-      '- NEVER use --no-verify, --force, or --no-gpg-sign.',
+      '- NEVER use --no-verify, --force, or --no-gpg-sign.' +
+      kbSection,
   });
 
-  // Restore previous session if user accepted recovery
-  if (recoverSession && snapshot) {
-    for (const msg of snapshot.messages) {
-      agent.getConversation().append(msg.role, msg.content);
+  // Initialize session manager
+  const sessionManager = new SessionManager(process.cwd());
+  const sessionsDir = resolveSessionsDir(process.cwd());
+
+  // Git tracking warning
+  warnIfSessionsTracked(process.cwd());
+
+  // Migration check
+  await SessionManager.migrateGlobalRecovery(sessionsDir, process.cwd());
+
+  // Session cleanup
+  await SessionManager.cleanup(sessionsDir, config.context.max_sessions);
+
+  // Handle session resume
+  let sessionResumed = false;
+  if (cliOpts.resume) {
+    // --resume flag provided
+    const sessions = await SessionManager.listSessions(sessionsDir);
+    let targetId: string | undefined;
+
+    if (cliOpts.resume === true || cliOpts.resume === 'latest') {
+      // --resume or --resume latest: pick most recent
+      targetId = sessions[0]?.id;
+    } else {
+      // --resume <identifier>: find by identifier or UUID prefix
+      const match = sessions.find(
+        (s) => s.identifier === cliOpts.resume || s.id.startsWith(cliOpts.resume as string),
+      );
+      targetId = match?.id;
     }
-    console.log(`Restored ${snapshot.messages.length} messages from previous session.`);
+
+    if (targetId) {
+      const restored = await sessionManager.resume(targetId);
+      if (restored.summary) {
+        agent.getConversation().appendText(
+          'system',
+          `Resuming session "${restored.metadata.identifier}" from ${restored.metadata.lastActive}.\n\n` +
+            `Session summary:\n${restored.summary}\n\nContinue from where we left off.`,
+        );
+      } else {
+        for (const msg of restored.messages) {
+          agent.getConversation().append(msg.role, msg.content);
+        }
+      }
+      console.log(
+        `Resumed session: ${restored.metadata.identifier} (${restored.messages.length} messages)`,
+      );
+      sessionResumed = true;
+    } else {
+      console.log('No matching session found. Starting fresh.');
+    }
+  } else {
+    // Check for existing sessions
+    const sessions = await SessionManager.listSessions(sessionsDir);
+    if (sessions.length > 0) {
+      const selectedId = await presentSessionPicker(sessions);
+      if (selectedId) {
+        const restored = await sessionManager.resume(selectedId);
+        if (restored.summary) {
+          agent.getConversation().appendText(
+            'system',
+            `Resuming session "${restored.metadata.identifier}" from ${restored.metadata.lastActive}.\n\n` +
+              `Session summary:\n${restored.summary}\n\nContinue from where we left off.`,
+          );
+        } else {
+          for (const msg of restored.messages) {
+            agent.getConversation().append(msg.role, msg.content);
+          }
+        }
+        console.log(
+          `Resumed session: ${restored.metadata.identifier} (${restored.messages.length} messages)`,
+        );
+        sessionResumed = true;
+      }
+    }
   }
+
+  // Create new session if not resumed
+  if (!sessionResumed) {
+    await sessionManager.create(modelAlias, gitCtx.branch);
+  }
+
+  let identifierDerived = sessionResumed;
+
+  // Wire session manager into /session command
+  setSessionManagerRef(sessionManager);
 
   // Build agent context for commands
   const agentContext = {
@@ -186,12 +271,21 @@ async function main() {
     {
       onMessage: async (input) => {
         await agent.handleMessage(input);
-        // Write recovery snapshot after each turn
-        await writeRecovery({
-          model: agent.model,
-          messages: agent.getConversation().getHistory(),
-          savedAt: new Date().toISOString(),
-        });
+        // Save session after each turn
+        const messages = agent.getConversation().getHistory();
+        await sessionManager.save(messages);
+
+        // Derive identifier after first exchange (user + assistant)
+        if (!identifierDerived && messages.length >= 2) {
+          const meta = sessionManager.getMetadata();
+          if (meta) {
+            const identifier = deriveIdentifier(messages, meta.id, gitCtx.branch);
+            sessionManager.updateIdentifier(identifier);
+            await sessionManager.save(messages); // persist updated identifier
+            replRef?.setSessionIdentifier(identifier);
+            identifierDerived = true;
+          }
+        }
       },
       onSlashCommand: async (command, args) => {
         const fullInput = args ? `${command} ${args}` : command;
@@ -243,7 +337,20 @@ async function main() {
         }
       },
       onExit: async () => {
-        await deleteRecovery();
+        const messages = agent.getConversation().getHistory();
+        let summarizer: SessionSummarizer | undefined;
+
+        // Resolve summarization model
+        const resolved = await resolveSummarizationModel(
+          config.context.summarization_model,
+          agent.model,
+        );
+        if (resolved) {
+          // Use active provider for summarization (simplest path)
+          summarizer = new SessionSummarizer(provider, resolved.model);
+        }
+
+        await sessionManager.close(messages, summarizer);
         await mcpManager.shutdown();
         console.log('\nGoodbye!');
       },
@@ -252,6 +359,13 @@ async function main() {
   );
 
   replRef = repl;
+
+  // Set session identifier on REPL if already known (resumed session)
+  const meta = sessionManager.getMetadata();
+  if (meta && identifierDerived) {
+    repl.setSessionIdentifier(meta.identifier);
+  }
+
   await repl.start();
 }
 

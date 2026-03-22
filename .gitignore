@@ -6,3 +6,4 @@ dist/
 
 .idea
 .copair
+.copair/sessions/

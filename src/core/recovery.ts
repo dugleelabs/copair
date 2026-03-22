@@ -1,3 +1,8 @@
+/**
+ * @deprecated This module is deprecated and kept only for migration purposes.
+ * Session persistence is now handled by SessionManager in src/core/session.ts.
+ * This module will be removed in a future release.
+ */
 import { readFile, writeFile, unlink, chmod } from 'node:fs/promises';
 import { existsSync, mkdirSync } from 'node:fs';
 import { join, resolve } from 'node:path';

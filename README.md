@@ -52,7 +52,10 @@ providers:
 
 ```
 copair                    # start with default model
-upcopair --model gpt-4o     # start with a specific model
+copair --model gpt-4o     # start with a specific model
+copair --resume           # resume most recent session
+copair --resume latest    # same as above
+copair --resume auth-fix  # resume session by identifier
 copair --verbose          # show INFO/WARN logs
 copair --debug            # show all logs including DEBUG
 ```
@@ -74,6 +77,7 @@ The agent has direct access to your codebase:
 | `Bash` | Execute shell commands with timeout |
 | `Git` | git status, diff, log, commit |
 | `WebSearch` | Search via Tavily, Serper, or SearXNG |
+| `UpdateKnowledge` | Add entries to project knowledge base |
 
 For models without native tool calling, Copair falls back to prompt-based tool extraction.
 
@@ -111,8 +115,45 @@ On exit, a per-model cost breakdown is shown. Supports all OpenAI, Anthropic, an
 | `/cost` | Show session token usage and cost |
 | `/workflow <name>` | Run a workflow |
 | `/commands` | List custom commands |
+| `/session list` | List all sessions for current project |
+| `/session resume <id>` | Resume a previous session |
+| `/session rename <name>` | Rename current session |
+| `/session delete <id>` | Delete a stored session |
+| `/session save` | Force save current session |
+| `/session info` | Show current session metadata |
 
 Custom commands are markdown files with frontmatter — drop them in `~/.copair/commands/` or `.copair/commands/`. Commands support nesting, positional arguments, and `$VAR` / `{{var}}` interpolation. They return their expanded markdown directly to the agent. → [Custom commands](docs/commands.md)
+
+## Sessions
+
+Sessions persist across exits. On startup, Copair checks for previous sessions in `.copair/sessions/` and offers to resume or start fresh. Sessions are auto-named from your git branch, first message, and files touched.
+
+```
+Previous sessions:
+  1. auth-middleware-refactor-a3f2  (2h ago, 42 msgs, claude-sonnet)
+  2. fix-login-bug-b7c1            (1d ago, 18 msgs, gemini-pro)
+  3. Start fresh
+
+Select [1-3]:
+```
+
+On exit, sessions are summarized using a local model (via Ollama if available) or the active model. Resumed sessions inject the summary as context instead of replaying full message history.
+
+Session files are stored in `.copair/sessions/` (gitignored automatically). Each session has a UUID directory containing `session.json`, `messages.jsonl`, and optionally `summary.md`.
+
+```yaml
+# Optional session config in ~/.copair/config.yaml
+context:
+  summarization_model: qwen-7b   # model alias for summaries
+  max_sessions: 20               # max sessions per project
+  knowledge_max_size: 8192       # max bytes for knowledge base
+```
+
+## Knowledge Base
+
+Copair maintains a project-level knowledge base at `COPAIR_KNOWLEDGE.md` in your project root. The agent adds entries when it learns project-specific facts (conventions, patterns, architecture decisions). This file is committed to git and shared with your team.
+
+The knowledge base is automatically included in the system prompt for all sessions in that project. Entries are timestamped and pruned when the file exceeds the configured max size.
 
 ## Workflows
 

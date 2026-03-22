@@ -100,25 +100,22 @@ export function createGoogleProvider(
         let totalOutputTokens = 0;
 
         for await (const chunk of response) {
-          if (chunk.text) {
-            yield { type: 'text', text: chunk.text };
-          }
+          // Access parts directly to avoid the SDK's .text getter which
+          // logs a warning when functionCall parts coexist with text parts.
+          const parts = chunk.candidates?.[0]?.content?.parts ?? [];
 
-          const functionCalls = chunk.candidates?.[0]?.content?.parts?.filter(
-            (p) => p.functionCall,
-          );
-          if (functionCalls) {
-            for (const part of functionCalls) {
-              if (part.functionCall) {
-                yield {
-                  type: 'tool_call',
-                  toolCall: {
-                    id: `call_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`,
-                    name: part.functionCall.name ?? '',
-                    arguments: JSON.stringify(part.functionCall.args ?? {}),
-                  },
-                };
-              }
+          for (const part of parts) {
+            if (typeof part.text === 'string' && part.text) {
+              yield { type: 'text', text: part.text };
+            } else if (part.functionCall) {
+              yield {
+                type: 'tool_call',
+                toolCall: {
+                  id: `call_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`,
+                  name: part.functionCall.name ?? '',
+                  arguments: JSON.stringify(part.functionCall.args ?? {}),
+                },
+              };
             }
           }
 
@@ -142,26 +139,19 @@ export function createGoogleProvider(
           config,
         });
 
-        if (response.text) {
-          yield { type: 'text', text: response.text };
-        }
-
-        const functionCalls =
-          response.candidates?.[0]?.content?.parts?.filter(
-            (p) => p.functionCall,
-          );
-        if (functionCalls) {
-          for (const part of functionCalls) {
-            if (part.functionCall) {
-              yield {
-                type: 'tool_call',
-                toolCall: {
-                  id: `call_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`,
-                  name: part.functionCall.name ?? '',
-                  arguments: JSON.stringify(part.functionCall.args ?? {}),
-                },
-              };
-            }
+        const parts = response.candidates?.[0]?.content?.parts ?? [];
+        for (const part of parts) {
+          if (typeof part.text === 'string' && part.text) {
+            yield { type: 'text', text: part.text };
+          } else if (part.functionCall) {
+            yield {
+              type: 'tool_call',
+              toolCall: {
+                id: `call_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`,
+                name: part.functionCall.name ?? '',
+                arguments: JSON.stringify(part.functionCall.args ?? {}),
+              },
+            };
           }
         }
 

@@ -165,7 +165,11 @@ async function main() {
       await agent.handleMessage(prompt);
     },
     async (input: string) => {
-      return cmdRegistry.execute(input, { ...agentContext, model: agent.model });
+      const result = await cmdRegistry.execute(input, { ...agentContext, model: agent.model });
+      if (result && result.prompt) {
+        await agent.handleMessage(result.prompt);
+      }
+      return !!result;
     },
   );
   // Will be registered after loadAll()
@@ -230,9 +234,12 @@ async function main() {
           return;
         }
 
-        const handled = await cmdRegistry.execute(fullInput, ctx);
-        if (!handled) {
+        const result = await cmdRegistry.execute(fullInput, ctx);
+        if (!result) {
           console.log(`Unknown command: /${command}. Type /help for available commands.`);
+        } else if (result.prompt) {
+          // Custom command returned a prompt — feed it to the agent
+          await agent.handleMessage(result.prompt);
         }
       },
       onExit: async () => {

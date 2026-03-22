@@ -23,6 +23,7 @@ export class Repl {
   private ctrlCCount = 0;
   private ctrlCTimer: ReturnType<typeof setTimeout> | null = null;
   private history: string[] = [];
+  private sessionIdentifier: string | null = null;
 
   constructor(callbacks: ReplCallbacks, modelName: string) {
     this.callbacks = callbacks;
@@ -34,8 +35,13 @@ export class Repl {
     this.modelName = name;
   }
 
+  setSessionIdentifier(id: string): void {
+    this.sessionIdentifier = id;
+  }
+
   private get prompt(): string {
-    return chalk.cyan(`copair (${this.modelName})`) + chalk.gray(' > ');
+    const session = this.sessionIdentifier ? ` [${this.sessionIdentifier}]` : '';
+    return chalk.cyan(`copair (${this.modelName})`) + chalk.dim(session) + chalk.gray(' > ');
   }
 
   async start(): Promise<void> {

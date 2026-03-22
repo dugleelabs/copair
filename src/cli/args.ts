@@ -19,6 +19,7 @@ export interface CliOptions {
   config?: string;
   verbose: boolean;
   debug: boolean;
+  resume?: string | true;
 }
 
 export function parseArgs(argv: string[] = process.argv): CliOptions {
@@ -32,6 +33,7 @@ export function parseArgs(argv: string[] = process.argv): CliOptions {
     .option('-c, --config <path>', 'Path to config file')
     .option('--verbose', 'Enable verbose logging (WARN + INFO)', false)
     .option('--debug', 'Enable debug logging (all levels)', false)
+    .option('--resume [identifier]', 'Resume a previous session (use "latest" for most recent)')
     .parse(argv);
 
   const opts = program.opts();
@@ -41,5 +43,6 @@ export function parseArgs(argv: string[] = process.argv): CliOptions {
     config: opts.config,
     verbose: opts.verbose || opts.debug,
     debug: opts.debug || process.env.DEBUG === 'copair',
+    resume: opts.resume,
   };
 }

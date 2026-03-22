@@ -4,6 +4,7 @@ import { modelCommand } from './builtins/model.js';
 import { clearCommand } from './builtins/clear.js';
 import { costCommand } from './builtins/cost.js';
 import { commandsCommand } from './builtins/commands.js';
+import { sessionCommand } from './builtins/session.js';
 import { loadCustomCommands } from './loader.js';
 import { interpolate } from './interpolate.js';
 
@@ -13,6 +14,7 @@ const BUILTINS: Command[] = [
   clearCommand,
   costCommand,
   commandsCommand,
+  sessionCommand,
 ];
 
 export class CommandRegistry {

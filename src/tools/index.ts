@@ -8,6 +8,7 @@ export { globTool } from './glob.js';
 export { bashTool } from './bash.js';
 export { gitTool, createGitTool } from './git.js';
 export { createWebSearchTool } from './web-search.js';
+export { updateKnowledgeTool, setKnowledgeBase } from './update-knowledge.js';
 
 import { ToolRegistry } from './registry.js';
 import { readTool } from './read.js';
@@ -19,6 +20,7 @@ import { bashTool } from './bash.js';
 import { createGitTool } from './git.js';
 import type { CopairConfig } from '../config/schema.js';
 import { createWebSearchTool } from './web-search.js';
+import { updateKnowledgeTool } from './update-knowledge.js';
 
 export function createDefaultToolRegistry(config?: CopairConfig): ToolRegistry {
   const registry = new ToolRegistry();
@@ -29,6 +31,7 @@ export function createDefaultToolRegistry(config?: CopairConfig): ToolRegistry {
   registry.register(globTool);
   registry.register(bashTool);
   registry.register(createGitTool(config?.identity));
+  registry.register(updateKnowledgeTool);
   if (config) {
     const webSearch = createWebSearchTool(config);
     if (webSearch) registry.register(webSearch);

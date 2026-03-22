@@ -1,5 +1,5 @@
-import { readdir, readFile } from 'node:fs/promises';
-import { join, resolve } from 'node:path';
+import { readdir, readFile, stat } from 'node:fs/promises';
+import { join, resolve, relative } from 'node:path';
 import { existsSync } from 'node:fs';
 import type { Command, AgentContext } from './interface.js';
 import { interpolate } from './interpolate.js';
@@ -10,6 +10,14 @@ interface CommandFrontmatter {
   args?: Array<{ name: string; description?: string; default?: string; required?: boolean }>;
 }
 
+/**
+ * Parse frontmatter from a command file.
+ *
+ * Accepts both copair-native format (name, description, args) and
+ * Claude Code format (allowed-tools, description). When `name` is
+ * missing from frontmatter, it can be derived from the file path
+ * by the caller.
+ */
 function parseFrontmatter(content: string): { meta: CommandFrontmatter; body: string } | null {
   const match = content.match(/^---\n([\s\S]*?)\n---\n?([\s\S]*)$/);
   if (!match) return null;
@@ -21,7 +29,8 @@ function parseFrontmatter(content: string): { meta: CommandFrontmatter; body: st
   let inArgs = false;
 
   for (const line of yamlLines) {
-    const topLevel = line.match(/^(\w+):\s*(.*)/);
+    // Match top-level keys including hyphenated ones (e.g. allowed-tools)
+    const topLevel = line.match(/^([\w-]+):\s*(.*)/);
     if (topLevel) {
       currentKey = topLevel[1];
       inArgs = currentKey === 'args';
@@ -42,31 +51,54 @@ function parseFrontmatter(content: string): { meta: CommandFrontmatter; body: st
 
   if (argsArray.length > 0) meta['args'] = argsArray;
 
-  if (!meta['name']) return null;
-
+  // name is no longer required in frontmatter — caller derives from path
   return {
     meta: meta as unknown as CommandFrontmatter,
     body: match[2].trim(),
   };
 }
 
+/**
+ * Derive a slash-separated command name from a file path relative to the
+ * commands directory. e.g. `dugleelabs/spec/status.md` → `dugleelabs/spec/status`
+ */
+function nameFromPath(relPath: string): string {
+  return relPath.replace(/\.md$/, '');
+}
+
+/**
+ * Recursively collect all .md files under a directory.
+ */
+async function collectMarkdownFiles(dir: string): Promise<string[]> {
+  if (!existsSync(dir)) return [];
+  const results: string[] = [];
+  let entries: string[];
+  try {
+    entries = await readdir(dir);
+  } catch {
+    return [];
+  }
+  for (const entry of entries) {
+    const full = join(dir, entry);
+    const s = await stat(full).catch(() => null);
+    if (!s) continue;
+    if (s.isDirectory()) {
+      results.push(...(await collectMarkdownFiles(full)));
+    } else if (entry.endsWith('.md')) {
+      results.push(full);
+    }
+  }
+  return results;
+}
+
 async function loadCommandsFromDir(
   dir: string,
   source: 'global' | 'project',
 ): Promise<Command[]> {
-  if (!existsSync(dir)) return [];
-
+  const mdFiles = await collectMarkdownFiles(dir);
   const commands: Command[] = [];
-  let files: string[];
-  try {
-    files = await readdir(dir);
-  } catch {
-    return [];
-  }
 
-  for (const file of files) {
-    if (!file.endsWith('.md')) continue;
-    const filePath = join(dir, file);
+  for (const filePath of mdFiles) {
     const content = await readFile(filePath, 'utf8').catch(() => null);
     if (!content) continue;
 
@@ -74,17 +106,19 @@ async function loadCommandsFromDir(
     if (!parsed) continue;
 
     const { meta, body } = parsed;
+
+    // Derive name from relative path if not in frontmatter
+    const name = meta.name || nameFromPath(relative(dir, filePath));
+
     const command: Command = {
       definition: {
-        name: meta.name,
+        name,
         description: meta.description ?? '',
         args: meta.args,
         source,
       },
-      async execute(args: Record<string, string>, context: AgentContext): Promise<void> {
-        const expanded = await interpolate(body, args, context);
-        // Output the expanded prompt — the REPL will feed it to the agent
-        process.stdout.write(expanded + '\n');
+      async execute(args: Record<string, string>, context: AgentContext): Promise<string> {
+        return interpolate(body, args, context);
       },
     };
 

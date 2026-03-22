@@ -19,12 +19,17 @@ function toGeminiContents(messages: Message[]): Content[] {
       if (block.type === 'text') {
         parts.push({ text: block.text });
       } else if (block.type === 'tool_use') {
-        parts.push({
+        const part: Part = {
           functionCall: {
             name: block.name,
             args: block.input as Record<string, unknown>,
           },
-        });
+        };
+        // Preserve thought signature for Gemini 3.x models
+        if (block.metadata?.thoughtSignature) {
+          part.thoughtSignature = block.metadata.thoughtSignature as string;
+        }
+        parts.push(part);
       } else if (block.type === 'tool_result') {
         parts.push({
           functionResponse: {
@@ -53,6 +58,16 @@ function toGeminiFunctionDeclarations(
     description: t.description,
     parameters: t.inputSchema,
   }));
+}
+
+/**
+ * Extract tool call metadata (thoughtSignature) from a Gemini Part.
+ */
+function extractMetadata(part: Part): Record<string, unknown> | undefined {
+  if (part.thoughtSignature) {
+    return { thoughtSignature: part.thoughtSignature };
+  }
+  return undefined;
 }
 
 export function createGoogleProvider(
@@ -100,25 +115,24 @@ export function createGoogleProvider(
         let totalOutputTokens = 0;
 
         for await (const chunk of response) {
-          if (chunk.text) {
-            yield { type: 'text', text: chunk.text };
-          }
+          // Access parts directly to avoid the SDK's .text getter which
+          // logs a warning when functionCall parts coexist with text parts.
+          const parts = chunk.candidates?.[0]?.content?.parts ?? [];
 
-          const functionCalls = chunk.candidates?.[0]?.content?.parts?.filter(
-            (p) => p.functionCall,
-          );
-          if (functionCalls) {
-            for (const part of functionCalls) {
-              if (part.functionCall) {
-                yield {
-                  type: 'tool_call',
-                  toolCall: {
-                    id: `call_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`,
-                    name: part.functionCall.name ?? '',
-                    arguments: JSON.stringify(part.functionCall.args ?? {}),
-                  },
-                };
-              }
+          for (const part of parts) {
+            if (typeof part.text === 'string' && part.text && !part.thought) {
+              yield { type: 'text', text: part.text };
+            } else if (part.functionCall) {
+              const metadata = extractMetadata(part);
+              yield {
+                type: 'tool_call',
+                toolCall: {
+                  id: `call_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`,
+                  name: part.functionCall.name ?? '',
+                  arguments: JSON.stringify(part.functionCall.args ?? {}),
+                  ...(metadata ? { metadata } : {}),
+                },
+              };
             }
           }
 
@@ -142,26 +156,21 @@ export function createGoogleProvider(
           config,
         });
 
-        if (response.text) {
-          yield { type: 'text', text: response.text };
-        }
-
-        const functionCalls =
-          response.candidates?.[0]?.content?.parts?.filter(
-            (p) => p.functionCall,
-          );
-        if (functionCalls) {
-          for (const part of functionCalls) {
-            if (part.functionCall) {
-              yield {
-                type: 'tool_call',
-                toolCall: {
-                  id: `call_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`,
-                  name: part.functionCall.name ?? '',
-                  arguments: JSON.stringify(part.functionCall.args ?? {}),
-                },
-              };
-            }
+        const parts = response.candidates?.[0]?.content?.parts ?? [];
+        for (const part of parts) {
+          if (typeof part.text === 'string' && part.text && !part.thought) {
+            yield { type: 'text', text: part.text };
+          } else if (part.functionCall) {
+            const metadata = extractMetadata(part);
+            yield {
+              type: 'tool_call',
+              toolCall: {
+                id: `call_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`,
+                name: part.functionCall.name ?? '',
+                arguments: JSON.stringify(part.functionCall.args ?? {}),
+                ...(metadata ? { metadata } : {}),
+              },
+            };
           }
         }
 

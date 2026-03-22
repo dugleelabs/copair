@@ -5,7 +5,7 @@ export interface Message {
 
 export type ContentBlock =
   | { type: 'text'; text: string }
-  | { type: 'tool_use'; id: string; name: string; input: Record<string, unknown> }
+  | { type: 'tool_use'; id: string; name: string; input: Record<string, unknown>; metadata?: Record<string, unknown> }
   | { type: 'tool_result'; toolUseId: string; content: string; isError?: boolean };
 
 export interface StreamChunk {
@@ -15,6 +15,7 @@ export interface StreamChunk {
     id: string;
     name: string;
     arguments: string;
+    metadata?: Record<string, unknown>;
   };
   usage?: {
     inputTokens: number;

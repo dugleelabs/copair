@@ -14,26 +14,34 @@ export async function interpolate(
   args: Record<string, string>,
   context: AgentContext,
 ): Promise<string> {
-  return template.replace(/\{\{([^}]+)\}\}/g, (_match, key: string) => {
-    const trimmed = key.trim();
-
+  const resolve = (key: string): string | null => {
     // env.VAR_NAME
-    if (trimmed.startsWith('env.')) {
-      const envKey = trimmed.slice(4);
-      return process.env[envKey] ?? '';
+    if (key.startsWith('env.')) {
+      return process.env[key.slice(4)] ?? '';
     }
 
     // Context variables
-    if (trimmed === 'model') return context.model;
-    if (trimmed === 'cwd') return context.cwd;
-    if (trimmed === 'branch') return context.branch ?? detectBranch(context.cwd);
+    if (key === 'model') return context.model;
+    if (key === 'cwd') return context.cwd;
+    if (key === 'branch') return context.branch ?? detectBranch(context.cwd);
 
     // Command arguments
-    if (trimmed in args) return args[trimmed];
+    if (key in args) return args[key];
 
-    // Unresolved — leave as-is
-    return _match;
+    return null;
+  };
+
+  // Replace {{var}} syntax (copair native)
+  let result = template.replace(/\{\{([^}]+)\}\}/g, (_match, key: string) => {
+    return resolve(key.trim()) ?? _match;
   });
+
+  // Replace $VAR syntax (Claude Code convention) — uppercase + underscore identifiers only
+  result = result.replace(/\$([A-Z][A-Z0-9_]*)/g, (_match, key: string) => {
+    return resolve(key) ?? _match;
+  });
+
+  return result;
 }
 
 function detectBranch(cwd: string): string {

@@ -23,6 +23,7 @@ import { setSessionManagerRef } from './commands/builtins/session.js';
 import { ensureProjectInit } from './core/init.js';
 import { checkForUpdates } from './core/version-check.js';
 import { ApprovalGate } from './core/approval-gate.js';
+import { AgentBridge } from './cli/ui/agent-bridge.js';
 import { ToolExecutor } from './core/tool-executor.js';
 import { loadAllowList } from './core/allow-list.js';
 import type { CopairConfig, ProviderConfig } from './config/schema.js';
@@ -90,6 +91,9 @@ async function main() {
   const allowList = loadAllowList();
   const gate = new ApprovalGate(config.permissions.mode, allowList);
   const executor = new ToolExecutor(toolRegistry, gate);
+
+  // Agent ↔ UI bridge — events flow through this once ink replaces readline (Phase 2)
+  const agentBridge = new AgentBridge();
 
   // Deferred MCP initialization — starts after REPL is up
   const mcpManager = new McpClientManager();

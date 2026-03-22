@@ -15,7 +15,7 @@ copair
 |----------|------|
 | Anthropic (Claude) | Native |
 | OpenAI (GPT-4o, o1, etc.) | Native |
-| Google Gemini | Native |
+| Google Gemini (incl. 2.0/3.0 thought signatures) | Native |
 | Ollama, vLLM, LM Studio, etc. | OpenAI-compatible |
 
 Switch models mid-session with `/model <name>`. Context is summarized automatically before switching.
@@ -112,7 +112,7 @@ On exit, a per-model cost breakdown is shown. Supports all OpenAI, Anthropic, an
 | `/workflow <name>` | Run a workflow |
 | `/commands` | List custom commands |
 
-Custom commands are markdown files with frontmatter — drop them in `~/.copair/commands/` or `.copair/commands/`. → [Custom commands](docs/commands.md)
+Custom commands are markdown files with frontmatter — drop them in `~/.copair/commands/` or `.copair/commands/`. Commands support nesting, positional arguments, and `$VAR` / `{{var}}` interpolation. They return their expanded markdown directly to the agent. → [Custom commands](docs/commands.md)
 
 ## Workflows
 

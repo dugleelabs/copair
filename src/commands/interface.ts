@@ -20,5 +20,6 @@ export interface AgentContext {
 
 export interface Command {
   definition: CommandDefinition;
-  execute(args: Record<string, string>, context: AgentContext): Promise<void>;
+  /** Return a string to have it sent to the agent as a message. */
+  execute(args: Record<string, string>, context: AgentContext): Promise<string | void>;
 }

@@ -189,6 +189,7 @@ export class Agent {
         id: tc.id,
         name: tc.name,
         input: JSON.parse(tc.arguments || '{}'),
+        ...(tc.metadata ? { metadata: tc.metadata } : {}),
       }));
       this.conversation.append('assistant', assistantContent);
 

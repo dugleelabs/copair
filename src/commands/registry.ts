@@ -81,20 +81,26 @@ export class CommandRegistry {
     const command = this.commands.get(name);
     if (!command) return null;
 
-    // Parse key=value args
+    // Parse key=value args + capture positional text as ARGUMENTS
     const args: Record<string, string> = {};
+    const positional: string[] = [];
     for (const part of parts.slice(1)) {
       const eqIdx = part.indexOf('=');
       if (eqIdx !== -1) {
         const key = part.slice(0, eqIdx);
         args[key] = part.slice(eqIdx + 1);
+      } else {
+        positional.push(part);
       }
+    }
+    if (positional.length > 0) {
+      args['ARGUMENTS'] = positional.join(' ');
     }
 
     return { command, args };
   }
 
-  async execute(input: string, context: AgentContext): Promise<boolean> {
+  async execute(input: string, context: AgentContext): Promise<{ handled: true; prompt?: string } | false> {
     const resolved = this.resolve(input);
     if (!resolved) return false;
 
@@ -109,8 +115,8 @@ export class CommandRegistry {
       }
     }
 
-    await command.execute(args, context);
-    return true;
+    const result = await command.execute(args, context);
+    return { handled: true, prompt: typeof result === 'string' ? result : undefined };
   }
 
   getCompletions(partial: string): string[] {

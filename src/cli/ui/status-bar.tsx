@@ -20,13 +20,13 @@ export function StatusBar({ bridge, model, sessionIdentifier, visible = true }: 
     sessionOutputTokens: 0,
     sessionCost: 0,
   });
-  const [contextPercent, setContextPercent] = useState(0);
-
   useEffect(() => {
     const onUsage = (u: TokenUsage) => setUsage(u);
     bridge.on('usage', onUsage);
     return () => { bridge.off('usage', onUsage); };
   }, [bridge]);
+
+  const contextPercent = usage.contextPercent ?? 0;
 
   if (!visible) return null;
 

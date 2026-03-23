@@ -33,6 +33,7 @@ export interface TokenUsage {
   sessionInputTokens: number;
   sessionOutputTokens: number;
   sessionCost: number;
+  contextPercent?: number;
 }
 
 export type ApprovalAnswer = 'allow' | 'always' | 'deny' | 'all' | 'similar';

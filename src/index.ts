@@ -348,6 +348,11 @@ async function main() {
           '',
         );
         const summary = tokenTracker.getSessionSummary();
+        // Estimate context window usage from session tokens vs provider limit
+        const contextPercent = Math.min(
+          100,
+          Math.round((summary.totalInput + summary.totalOutput) / provider.maxContextWindow * 100),
+        );
         agentBridge.emit('usage', {
           inputTokens: result.usage.inputTokens,
           outputTokens: result.usage.outputTokens,
@@ -355,6 +360,7 @@ async function main() {
           sessionInputTokens: summary.totalInput,
           sessionOutputTokens: summary.totalOutput,
           sessionCost: summary.totalCost,
+          contextPercent,
         });
       }
 

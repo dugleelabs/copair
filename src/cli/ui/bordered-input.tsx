@@ -41,7 +41,7 @@ export function hasInkGhostingIssue(): boolean {
 // ── Component ───────────────────────────────────────────────────────────────
 
 export function BorderedInput({
-  sessionIdentifier,
+  sessionIdentifier: _sessionIdentifier,
   bordered = true,
   isActive = true,
   history = [],

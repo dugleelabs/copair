@@ -1,3 +1,6 @@
+import { readdirSync } from 'node:fs';
+import { join, dirname, basename } from 'node:path';
+
 // ── Completion Provider Interface ────────────────────────────────────────────
 
 export interface CompletionItem {
@@ -105,8 +108,7 @@ export class FilePathProvider implements CompletionProvider {
   complete(input: string): CompletionItem[] {
     const lastToken = input.split(/\s+/).pop() ?? '';
     try {
-      const { readdirSync } = require('node:fs') as typeof import('node:fs');
-      const { join, dirname, basename } = require('node:path') as typeof import('node:path');
+      // node:fs and node:path imported at top level
 
       const dir = lastToken.endsWith('/')
         ? join(this.cwd, lastToken)

@@ -1,4 +1,4 @@
-import { globSync } from 'node:fs';
+import { globSync } from 'glob';
 import { resolve } from 'node:path';
 import type { Tool } from './interface.js';
 

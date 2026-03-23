@@ -77,7 +77,7 @@ export async function executeStep(
           wfContext.inputs[step.capture] = stderr;
         }
         if (!step.continue_on_error) {
-          throw new Error(`Shell command failed (exit ${exitCode}): ${command}`);
+          throw new Error(`Shell command failed (exit ${exitCode}): ${command}`, { cause: err });
         }
         return result;
       }

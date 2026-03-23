@@ -2,6 +2,13 @@
   <img src="https://assets.dugleelabs.com/Copair_Logo_cc1a297c94.png" width="160" alt="Copair Logo" />
 </p>
 
+<p align="center">
+  <a href="https://www.npmjs.com/package/copair"><img src="https://img.shields.io/npm/v/copair" alt="npm version"></a>
+  <a href="https://github.com/dugleelabs/copair/blob/main/LICENSE"><img src="https://img.shields.io/npm/l/copair" alt="license"></a>
+  <a href="https://github.com/dugleelabs/copair/actions"><img src="https://img.shields.io/github/actions/workflow/status/dugleelabs/copair/pull_request.yaml?branch=main&label=CI" alt="CI"></a>
+  <a href="https://nodejs.org"><img src="https://img.shields.io/node/v/copair" alt="node version"></a>
+</p>
+
 A model-agnostic AI coding agent for the terminal. Works like Claude Code but supports any LLM provider — commercial APIs, open source models, or self-hosted instances.
 
 ```

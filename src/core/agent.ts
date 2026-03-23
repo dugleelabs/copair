@@ -4,7 +4,7 @@ import type { ToolExecutor } from './tool-executor.js';
 import { ConversationManager } from './conversation.js';
 import { ContextWindowManager } from './context-window.js';
 import { Renderer, formatToolCallFromInput } from '../cli/renderer.js';
-import { buildToolSystemPrompt, parseToolCallsFromText } from './tool-fallback.js';
+
 import type { ToolCallFormatter } from './formats/interface.js';
 import type { FormatName } from './formats/index.js';
 import { resolveFormatter, buildTextFilter } from './formats/index.js';
@@ -220,7 +220,7 @@ export class Agent {
         });
 
         // Stop spinner before showing the final state
-        spinner?.stop();
+        (spinner as ReturnType<Renderer['startToolSpinner']> | null)?.stop();
 
         if (result.denied) {
           this.renderer.deniedToolExecution(label);

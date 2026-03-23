@@ -43,7 +43,7 @@ export function ToolResultView({
   toolName,
   input,
   result,
-  durationMs,
+  durationMs: _durationMs,
   syntaxHighlight = true,
   maxLines = 50,
 }: ToolResultViewProps) {
@@ -162,7 +162,7 @@ function EditResult({
     <Box flexDirection="column" marginLeft={2}>
       <Text dimColor>{fileLink(filePath)}</Text>
       {oldStr !== undefined && newStr !== undefined && (
-        <SimpleDiff oldText={oldStr} newText={newStr} maxLines={30} />
+        <SimpleDiff filePath="" oldContent={oldStr ?? null} newContent={newStr ?? ''} maxLines={30} />
       )}
     </Box>
   );
@@ -203,7 +203,7 @@ function BashResult({
 // ── Search Result ───────────────────────────────────────────────────────────
 
 function SearchResult({
-  toolName,
+  toolName: _toolName,
   result,
   maxLines,
 }: {

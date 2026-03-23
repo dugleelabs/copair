@@ -79,11 +79,11 @@ export class Renderer {
     stream: AsyncIterableIterator<StreamChunk>,
     textFilter?: (text: string) => string,
   ): Promise<{
-    toolCalls: Array<{ id: string; name: string; arguments: string }>;
+    toolCalls: Array<{ id: string; name: string; arguments: string; metadata?: Record<string, unknown> }>;
     usage: { inputTokens: number; outputTokens: number } | null;
     fullText: string;
   }> {
-    const toolCalls: Array<{ id: string; name: string; arguments: string }> = [];
+    const toolCalls: Array<{ id: string; name: string; arguments: string; metadata?: Record<string, unknown> }> = [];
     let usage: { inputTokens: number; outputTokens: number } | null = null;
     let fullText = '';
 

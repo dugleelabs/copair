@@ -1,6 +1,6 @@
 export interface ArgDefinition {
   name: string;
-  description: string;
+  description?: string;
   default?: string;
   required?: boolean;
 }

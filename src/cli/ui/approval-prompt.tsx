@@ -1,14 +1,14 @@
 import React from 'react';
 import { Box, Text, useStdout } from 'ink';
 import { DiffView } from './diff-view.js';
-import type { ApprovalRequest, ApprovalAnswer, DiffInfo } from './agent-bridge.js';
+import type { ApprovalRequest, ApprovalAnswer } from './agent-bridge.js';
 
 export interface ApprovalPromptProps {
   request: ApprovalRequest;
   onRespond: (answer: ApprovalAnswer) => void;
 }
 
-export function ApprovalPrompt({ request, onRespond }: ApprovalPromptProps) {
+export function ApprovalPrompt({ request, onRespond: _onRespond }: ApprovalPromptProps) {
   const { stdout } = useStdout();
   const columns = stdout?.columns ?? 80;
 

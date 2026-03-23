@@ -1,5 +1,5 @@
 import { readFile, appendFile, writeFile } from 'node:fs/promises';
-import { existsSync } from 'node:fs';
+import { existsSync, readFileSync } from 'node:fs';
 import { join } from 'node:path';
 
 const KB_FILENAME = 'COPAIR_KNOWLEDGE.md';
@@ -64,7 +64,7 @@ export class KnowledgeBase {
     // Synchronous read for system prompt injection at startup
     if (!existsSync(this.filePath)) return '';
     try {
-      const content = require('node:fs').readFileSync(this.filePath, 'utf8') as string;
+      const content = readFileSync(this.filePath, 'utf8') as string;
       if (!content.trim()) return '';
       return (
         '\nThe following project knowledge was accumulated from prior sessions:\n\n---\n' +

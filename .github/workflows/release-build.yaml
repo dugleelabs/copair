@@ -1,0 +1,130 @@
+name: Build and Publish
+
+on:
+  release:
+    types: [published]
+
+jobs:
+  # ── Job 1: Publish unscoped package (copair) ──────────────────
+  publish-npm:
+    name: Publish copair to npm
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.release.tag_name }}
+
+      - uses: pnpm/action-setup@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: pnpm
+          registry-url: https://registry.npmjs.org
+
+      - run: pnpm install --frozen-lockfile
+      - run: pnpm lint
+      - run: pnpm exec tsc --noEmit
+      - run: pnpm build
+      - run: pnpm test
+
+      - name: Publish copair
+        run: pnpm publish --access public --no-git-checks
+        env:
+          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
+
+  # ── Job 2: Publish scoped package (@dugleelabs/copair) ────────
+  publish-npm-scoped:
+    name: Publish @dugleelabs/copair to npm
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.release.tag_name }}
+
+      - uses: pnpm/action-setup@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: pnpm
+          registry-url: https://registry.npmjs.org
+
+      - run: pnpm install --frozen-lockfile
+      - run: pnpm lint
+      - run: pnpm exec tsc --noEmit
+      - run: pnpm build
+      - run: pnpm test
+
+      - name: Publish @dugleelabs/copair
+        run: |
+          # Temporarily override package name for scoped publish
+          # Note: copair is "type": "module" — cannot use require()
+          node -e "
+            import { readFileSync, writeFileSync } from 'fs';
+            const pkg = JSON.parse(readFileSync('./package.json', 'utf8'));
+            pkg.name = '@dugleelabs/copair';
+            writeFileSync('package.json', JSON.stringify(pkg, null, 2));
+          " --input-type=module
+          pnpm publish --access public --no-git-checks
+        env:
+          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
+
+  # ── Job 3: Update Homebrew formula ────────────────────────────
+  publish-homebrew:
+    name: Update Homebrew formula
+    runs-on: ubuntu-latest
+    steps:
+      - name: Download release tarball and compute SHA256
+        id: tarball
+        run: |
+          VERSION="${{ github.event.release.tag_name }}"
+          VERSION="${VERSION#v}"  # strip leading v
+          URL="https://github.com/dugleelabs/copair/archive/refs/tags/${{ github.event.release.tag_name }}.tar.gz"
+          curl -sL "$URL" -o copair.tar.gz
+          SHA=$(sha256sum copair.tar.gz | awk '{print $1}')
+          echo "version=$VERSION" >> "$GITHUB_OUTPUT"
+          echo "url=$URL" >> "$GITHUB_OUTPUT"
+          echo "sha256=$SHA" >> "$GITHUB_OUTPUT"
+
+      - name: Checkout homebrew-tap
+        uses: actions/checkout@v4
+        with:
+          repository: dugleelabs/homebrew-tap
+          token: ${{ secrets.DUGLEEBOT_TOKEN }}
+          path: homebrew-tap
+
+      - name: Update formula
+        run: |
+          cat > homebrew-tap/Formula/copair.rb <<FORMULA_EOF
+          class Copair < Formula
+            desc "Model-agnostic AI coding agent for the terminal"
+            homepage "https://github.com/dugleelabs/copair"
+            url "${{ steps.tarball.outputs.url }}"
+            sha256 "${{ steps.tarball.outputs.sha256 }}"
+            license "MIT"
+
+            depends_on "node@20"
+
+            def install
+              system "npm", "install", *std_npm_args, "--production"
+              bin.install_symlink libexec/"bin/copair"
+            end
+
+            test do
+              assert_match version.to_s, shell_output("#{bin}/copair --version")
+            end
+          end
+          FORMULA_EOF
+          # Strip leading whitespace from heredoc (indented for YAML readability)
+          sed 's/^          //' homebrew-tap/Formula/copair.rb > homebrew-tap/Formula/copair.rb.tmp
+          mv homebrew-tap/Formula/copair.rb.tmp homebrew-tap/Formula/copair.rb
+
+      - name: Commit and push formula
+        run: |
+          cd homebrew-tap
+          git config user.name "dugleebot"
+          git config user.email "223939725+dugleebot@users.noreply.github.com"
+          git add Formula/copair.rb
+          git commit -m "copair ${{ steps.tarball.outputs.version }}"
+          git push

@@ -1,5 +1,5 @@
 import React, { useState, useCallback } from 'react';
-import { Box, Text, useInput } from 'ink';
+import { Text, useInput } from 'ink';
 
 // ── Types ───────────────────────────────────────────────────────────────────
 

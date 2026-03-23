@@ -348,10 +348,12 @@ async function main() {
           '',
         );
         const summary = tokenTracker.getSessionSummary();
-        // Estimate context window usage from session tokens vs provider limit
+        // Context window usage: last request's inputTokens is the actual payload
+        // sent to the API (includes full conversation history + system prompt + tools).
+        // This is the real measure of how full the context window is.
         const contextPercent = Math.min(
           100,
-          Math.round((summary.totalInput + summary.totalOutput) / provider.maxContextWindow * 100),
+          Math.round(result.usage.inputTokens / provider.maxContextWindow * 100),
         );
         agentBridge.emit('usage', {
           inputTokens: result.usage.inputTokens,

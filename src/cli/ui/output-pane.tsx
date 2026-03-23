@@ -63,12 +63,6 @@ export function OutputPane({ bridge, syntaxHighlight = true, maxNodes = 200 }: O
       });
     };
 
-    // Finalize current text node so the next chunk starts fresh
-    const sealTextNode = () => {
-      // No-op: the next appendText after a code block or error
-      // will create a new node since the last node won't be 'text'
-    };
-
     const onText = (text: string) => {
       // Process text for code fence detection
       // Split on newlines to detect ``` boundaries, but keep

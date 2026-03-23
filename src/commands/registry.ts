@@ -6,7 +6,6 @@ import { costCommand } from './builtins/cost.js';
 import { commandsCommand } from './builtins/commands.js';
 import { sessionCommand } from './builtins/session.js';
 import { loadCustomCommands } from './loader.js';
-import { interpolate } from './interpolate.js';
 
 const BUILTINS: Command[] = [
   helpCommand,
@@ -37,14 +36,13 @@ export class CommandRegistry {
   }
 
   private wireHelpCommand(): void {
-    const self = this;
     const existing = this.commands.get('help');
     if (!existing) return;
     this.commands.set('help', {
       ...existing,
       execute: async (_args, _context) => {
         console.log('\nAvailable commands:');
-        for (const cmd of self.commands.values()) {
+        for (const cmd of this.commands.values()) {
           console.log(`  /${cmd.definition.name.padEnd(15)} ${cmd.definition.description}`);
         }
         console.log('');
@@ -53,13 +51,12 @@ export class CommandRegistry {
   }
 
   private wireCommandsCommand(): void {
-    const self = this;
     const existing = this.commands.get('commands');
     if (!existing) return;
     this.commands.set('commands', {
       ...existing,
       execute: async (_args, _context) => {
-        const custom = Array.from(self.commands.values()).filter(
+        const custom = Array.from(this.commands.values()).filter(
           (c) => c.definition.source !== 'builtin',
         );
         if (custom.length === 0) {

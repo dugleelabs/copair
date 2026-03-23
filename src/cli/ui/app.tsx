@@ -119,7 +119,7 @@ const CopairApp = forwardRef<AppImperativeHandle, CopairAppProps>(function Copai
     onMessage,
     onHistoryAppend,
     onSlashCommand,
-    onExit,
+    onExit: _onExit,
   },
   ref,
 ) {

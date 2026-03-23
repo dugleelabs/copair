@@ -3,28 +3,6 @@ import type { Tool, ToolResult } from '../tools/interface.js';
 import type { ToolRegistry } from '../tools/registry.js';
 import type { McpClientManager } from './client.js';
 
-function mcpToolToTool(serverName: string, mcpTool: {
-  name: string;
-  description?: string;
-  inputSchema?: Record<string, unknown>;
-}): Tool {
-  return {
-    definition: {
-      name: mcpTool.name,
-      description: mcpTool.description ?? '',
-      inputSchema: mcpTool.inputSchema ?? { type: 'object', properties: {} },
-    },
-    requiresPermission: true,
-    execute: async (input: Record<string, unknown>): Promise<ToolResult> => {
-      // Execution is deferred to the bridge which has the client reference
-      // This function is replaced after creation
-      void serverName;
-      void input;
-      return { content: 'Error: tool not wired', isError: true };
-    },
-  };
-}
-
 export class McpBridge {
   constructor(
     private manager: McpClientManager,

@@ -43,7 +43,7 @@ export function ToolResultView({
   toolName,
   input,
   result,
-  durationMs,
+  durationMs: _durationMs,
   syntaxHighlight = true,
   maxLines = 50,
 }: ToolResultViewProps) {
@@ -203,7 +203,7 @@ function BashResult({
 // ── Search Result ───────────────────────────────────────────────────────────
 
 function SearchResult({
-  toolName,
+  toolName: _toolName,
   result,
   maxLines,
 }: {

@@ -24,7 +24,7 @@ function parseFrontmatter(content: string): { meta: CommandFrontmatter; body: st
 
   const yamlLines = match[1].split('\n');
   const meta: Record<string, unknown> = {};
-  let currentKey: string | null = null;
+  let currentKey: string | null;
   let argsArray: CommandFrontmatter['args'] = [];
   let inArgs = false;
 

@@ -105,10 +105,13 @@ export class Agent {
 
   async handleMessage(userInput: string): Promise<{
     usage: { inputTokens: number; outputTokens: number } | null;
+    /** Input tokens from the last API call — reflects actual context window usage. */
+    lastInputTokens: number;
   }> {
     this.conversation.appendText('user', userInput);
 
     let totalUsage: { inputTokens: number; outputTokens: number } | null = null;
+    let lastInputTokens = 0;
 
     // Agent loop — keep calling provider until no more tool calls
     while (true) {
@@ -168,6 +171,7 @@ export class Agent {
 
 
       if (usage) {
+        lastInputTokens = usage.inputTokens;
         totalUsage = totalUsage
           ? {
               inputTokens: totalUsage.inputTokens + usage.inputTokens,
@@ -287,6 +291,6 @@ export class Agent {
       if (denied) break;
     }
 
-    return { usage: totalUsage };
+    return { usage: totalUsage, lastInputTokens };
   }
 }

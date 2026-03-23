@@ -1,4 +1,4 @@
-import { globSync } from 'node:fs';
+import { globSync, statSync } from 'node:fs';
 import { resolve } from 'node:path';
 import type { Tool } from './interface.js';
 
@@ -21,7 +21,9 @@ export const globTool: Tool = {
     const cwd = (input.path as string) ?? process.cwd();
 
     try {
-      const matches = globSync(pattern, { cwd, nodir: true });
+      const matches = globSync(pattern, { cwd }).filter((m) => {
+        try { return !statSync(resolve(cwd, m)).isDirectory(); } catch { return true; }
+      });
       if (matches.length === 0) {
         return { content: `No files found matching "${pattern}" in ${cwd}` };
       }

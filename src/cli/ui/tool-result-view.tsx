@@ -162,7 +162,7 @@ function EditResult({
     <Box flexDirection="column" marginLeft={2}>
       <Text dimColor>{fileLink(filePath)}</Text>
       {oldStr !== undefined && newStr !== undefined && (
-        <SimpleDiff oldText={oldStr} newText={newStr} maxLines={30} />
+        <SimpleDiff filePath="" oldContent={oldStr ?? null} newContent={newStr ?? ''} maxLines={30} />
       )}
     </Box>
   );

@@ -220,7 +220,7 @@ export class Agent {
         });
 
         // Stop spinner before showing the final state
-        spinner?.stop();
+        (spinner as ReturnType<Renderer['startToolSpinner']> | null)?.stop();
 
         if (result.denied) {
           this.renderer.deniedToolExecution(label);

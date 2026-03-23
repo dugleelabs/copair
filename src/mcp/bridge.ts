@@ -31,8 +31,8 @@ export class McpBridge {
         execute: async (input: Record<string, unknown>): Promise<ToolResult> => {
           try {
             const result = await client.callTool({ name: mcpTool.name, arguments: input });
-            const content = result.content
-              .map((block: { type: string; text?: string }) =>
+            const content = (result.content as Array<{ type: string; text?: string }>)
+              .map((block) =>
                 block.type === 'text' ? (block.text ?? '') : JSON.stringify(block),
               )
               .join('\n');

@@ -210,14 +210,16 @@ export function createOpenAIProvider(
 
         if (choice.message.tool_calls) {
           for (const tc of choice.message.tool_calls) {
-            yield {
-              type: 'tool_call',
-              toolCall: {
-                id: tc.id,
-                name: tc.function.name,
-                arguments: tc.function.arguments,
-              },
-            };
+            if ('function' in tc) {
+              yield {
+                type: 'tool_call',
+                toolCall: {
+                  id: tc.id,
+                  name: tc.function.name,
+                  arguments: tc.function.arguments,
+                },
+              };
+            }
           }
         }
 

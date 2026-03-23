@@ -8,12 +8,14 @@ import { buildToolSystemPrompt, parseToolCallsFromText } from './tool-fallback.j
 import type { ToolCallFormatter } from './formats/interface.js';
 import type { FormatName } from './formats/index.js';
 import { resolveFormatter, buildTextFilter } from './formats/index.js';
+import type { AgentBridge } from '../cli/ui/agent-bridge.js';
 
 export interface AgentOptions {
   systemPrompt?: string;
   maxTokens?: number;
   temperature?: number;
   toolCallFormat?: FormatName;
+  bridge?: AgentBridge;
 }
 
 export class Agent {
@@ -41,7 +43,7 @@ export class Agent {
     this.executor = executor;
     this.conversation = new ConversationManager();
     this.contextWindow = new ContextWindowManager(provider.maxContextWindow);
-    this.renderer = new Renderer();
+    this.renderer = new Renderer(options.bridge);
     this.options = options;
     this.formatter = resolveFormatter(provider.name, model, options.toolCallFormat);
     this.textFilter = buildTextFilter(this.formatter);
@@ -103,10 +105,13 @@ export class Agent {
 
   async handleMessage(userInput: string): Promise<{
     usage: { inputTokens: number; outputTokens: number } | null;
+    /** Input tokens from the last API call — reflects actual context window usage. */
+    lastInputTokens: number;
   }> {
     this.conversation.appendText('user', userInput);
 
     let totalUsage: { inputTokens: number; outputTokens: number } | null = null;
+    let lastInputTokens = 0;
 
     // Agent loop — keep calling provider until no more tool calls
     while (true) {
@@ -166,6 +171,7 @@ export class Agent {
 
 
       if (usage) {
+        lastInputTokens = usage.inputTokens;
         totalUsage = totalUsage
           ? {
               inputTokens: totalUsage.inputTokens + usage.inputTokens,
@@ -285,6 +291,6 @@ export class Agent {
       if (denied) break;
     }
 
-    return { usage: totalUsage };
+    return { usage: totalUsage, lastInputTokens };
   }
 }

@@ -32,7 +32,9 @@ export class ContextWindowManager {
     if (provider.countTokens) {
       return provider.countTokens(messages);
     }
-    // Rough estimation: ~4 chars per token
+    // Conservative estimation: ~3 chars per token (errs on the side of
+    // truncating sooner to avoid API rejection). Actual ratio varies by
+    // content — code/JSON tends to be closer to 2-3 chars/token.
     let charCount = 0;
     for (const msg of messages) {
       for (const block of msg.content) {
@@ -42,7 +44,7 @@ export class ContextWindowManager {
         else if (block.type === 'tool_result') charCount += block.content.length;
       }
     }
-    return Math.ceil(charCount / 4);
+    return Math.ceil(charCount / 3);
   }
 
   private async summarize(
@@ -51,52 +53,77 @@ export class ContextWindowManager {
   ): Promise<Message[]> {
     if (messages.length <= 4) return messages;
 
-    // Keep first message (system) and last 4 turns
-    const keepFromEnd = 4;
-    const toSummarize = messages.slice(0, -keepFromEnd);
+    // Keep first message (system context) and last N turns.
+    // Use more aggressive truncation for very large histories.
+    const keepFromEnd = Math.min(4, Math.floor(messages.length / 2));
     const kept = messages.slice(-keepFromEnd);
 
+    // Check if even the kept messages fit within limits
+    const keptTokens = await this.countTokens(kept, provider);
+    if (keptTokens > this.tokenLimit - this.reserveTokens) {
+      // Even the last few messages are too large — drop all but the last 2
+      return messages.slice(-2);
+    }
+
+    const toSummarize = messages.slice(0, -keepFromEnd);
+
     // Build summary text from messages to be compressed
+    // Cap the summary input to prevent the summarization call itself from failing
     const summaryParts: string[] = [];
+    let summaryCharCount = 0;
+    const maxSummaryChars = 100_000; // ~33K tokens — safe for summarization call
     for (const msg of toSummarize) {
       const text = msg.content
         .filter((b) => b.type === 'text')
         .map((b) => b.text)
         .join(' ');
-      if (text) summaryParts.push(`[${msg.role}]: ${text}`);
+      if (text) {
+        if (summaryCharCount + text.length > maxSummaryChars) break;
+        summaryParts.push(`[${msg.role}]: ${text}`);
+        summaryCharCount += text.length;
+      }
     }
 
-    // Ask the provider to summarize
-    const summaryPrompt: Message[] = [
-      {
-        role: 'user',
+    // If nothing to summarize (all tool results, no text), just drop old messages
+    if (summaryParts.length === 0) {
+      return kept;
+    }
+
+    try {
+      const summaryPrompt: Message[] = [
+        {
+          role: 'user',
+          content: [
+            {
+              type: 'text',
+              text: `Summarize this conversation history concisely, preserving key decisions, file paths, and code context:\n\n${summaryParts.join('\n\n')}`,
+            },
+          ],
+        },
+      ];
+
+      const chunks: string[] = [];
+      for await (const chunk of provider.chat(summaryPrompt, [], {
+        model: '',
+        stream: false,
+      })) {
+        if (chunk.type === 'text' && chunk.text) chunks.push(chunk.text);
+      }
+
+      const summaryMessage: Message = {
+        role: 'system',
         content: [
           {
             type: 'text',
-            text: `Summarize this conversation history concisely, preserving key decisions, file paths, and code context:\n\n${summaryParts.join('\n\n')}`,
+            text: `[Context summary of earlier conversation]: ${chunks.join('')}`,
           },
         ],
-      },
-    ];
+      };
 
-    const chunks: string[] = [];
-    for await (const chunk of provider.chat(summaryPrompt, [], {
-      model: '',
-      stream: false,
-    })) {
-      if (chunk.type === 'text' && chunk.text) chunks.push(chunk.text);
+      return [summaryMessage, ...kept];
+    } catch {
+      // Summarization failed — fall back to simple truncation
+      return kept;
     }
-
-    const summaryMessage: Message = {
-      role: 'system',
-      content: [
-        {
-          type: 'text',
-          text: `[Context summary of earlier conversation]: ${chunks.join('')}`,
-        },
-      ],
-    };
-
-    return [summaryMessage, ...kept];
   }
 }

@@ -48,8 +48,18 @@ export const IdentityConfigSchema = z.object({
 
 export const ContextConfigSchema = z.object({
   summarization_model: z.string().optional(),
-  max_sessions: z.number().int().positive().default(20),
+  max_sessions: z.number().int().positive().default(1),
   knowledge_max_size: z.number().int().positive().default(8192),
+});
+
+export const UIConfigSchema = z.object({
+  bordered_input: z.boolean().default(true),
+  status_bar: z.boolean().default(true),
+  syntax_highlight: z.boolean().default(true),
+  output_collapsing: z.boolean().default(true),
+  vi_mode: z.boolean().default(false),
+  suggestions: z.boolean().default(true),
+  tab_completion: z.boolean().default(true),
 });
 
 export const CopairConfigSchema = z.object({
@@ -61,7 +71,8 @@ export const CopairConfigSchema = z.object({
   mcp_servers: z.array(McpServerConfigSchema).default([]),
   web_search: WebSearchConfigSchema.optional(),
   identity: IdentityConfigSchema.default({ name: 'Copair', email: 'copair[bot]@noreply.dugleelabs.io' }),
-  context: ContextConfigSchema.default({}),
+  context: ContextConfigSchema.default(() => ContextConfigSchema.parse({})),
+  ui: UIConfigSchema.default(() => UIConfigSchema.parse({})),
 });
 
 export type CopairConfig = z.infer<typeof CopairConfigSchema>;
@@ -69,3 +80,4 @@ export type ProviderConfig = z.infer<typeof ProviderConfigSchema>;
 export type ModelConfig = z.infer<typeof ModelConfigSchema>;
 export type IdentityConfig = z.infer<typeof IdentityConfigSchema>;
 export type ContextConfig = z.infer<typeof ContextConfigSchema>;
+export type UIConfig = z.infer<typeof UIConfigSchema>;

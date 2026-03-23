@@ -25,6 +25,19 @@ export function supportsUnicode(): boolean {
   return term !== '';
 }
 
+/**
+ * Detect terminals where ink's multi-line dynamic area causes ghost rendering.
+ * ink re-renders the dynamic area in place, but some terminals fail to properly
+ * clear previous frames, leaving bordered boxes frozen in scrollback.
+ */
+export function hasInkGhostingIssue(): boolean {
+  // iTerm2 sets TERM_PROGRAM=iTerm.app
+  if (process.env.TERM_PROGRAM === 'iTerm.app') return true;
+  // Apple Terminal
+  if (process.env.TERM_PROGRAM === 'Apple_Terminal') return true;
+  return false;
+}
+
 // ── Component ───────────────────────────────────────────────────────────────
 
 export function BorderedInput({
@@ -171,8 +184,9 @@ export function BorderedInput({
   // Multi-line info
   const lineCount = multiLineBuffer ? multiLineBuffer.split('\n').length : 0;
 
-  // Narrow terminal fallback (< 40 columns): plain prompt, no border
-  if (!bordered || columns < 40) {
+  // Fallback: plain prompt without border box.
+  // Used when: bordered disabled, narrow terminal, or terminal with ink ghosting issues.
+  if (!bordered || columns < 40 || hasInkGhostingIssue()) {
     return (
       <Box flexDirection="column">
         <Box>

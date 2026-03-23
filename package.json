@@ -1,5 +1,5 @@
 {
-  "name": "copair",
+  "name": "@dugleelabs/copair",
   "version": "1.0.0",
   "description": "Model-agnostic AI coding agent for the terminal",
   "type": "module",

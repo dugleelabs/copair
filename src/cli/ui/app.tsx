@@ -341,17 +341,19 @@ const CopairApp = forwardRef<AppImperativeHandle, CopairAppProps>(function Copai
         <Text color="yellow">{state.notification}</Text>
       )}
 
-      {/* Input area — always visible, disabled when not in input phase */}
-      <BorderedInput
-        sessionIdentifier={state.sessionIdentifier}
-        bordered={config.bordered_input}
-        isActive={state.phase === 'input'}
-        history={history}
-        completionEngine={completionEngine}
-        onSubmit={handleSubmit}
-        onHistoryAppend={onHistoryAppend}
-        onSlashCommand={onSlashCommand}
-      />
+      {/* Input area — full bordered box only during input phase */}
+      {state.phase === 'input' ? (
+        <BorderedInput
+          sessionIdentifier={state.sessionIdentifier}
+          bordered={config.bordered_input}
+          isActive={true}
+          history={history}
+          completionEngine={completionEngine}
+          onSubmit={handleSubmit}
+          onHistoryAppend={onHistoryAppend}
+          onSlashCommand={onSlashCommand}
+        />
+      ) : null}
 
       {/* Status bar */}
       <StatusBar

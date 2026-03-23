@@ -48,7 +48,7 @@ export const IdentityConfigSchema = z.object({
 
 export const ContextConfigSchema = z.object({
   summarization_model: z.string().optional(),
-  max_sessions: z.number().int().positive().default(20),
+  max_sessions: z.number().int().positive().default(1),
   knowledge_max_size: z.number().int().positive().default(8192),
 });
 

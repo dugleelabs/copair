@@ -237,6 +237,8 @@ async function main() {
   // Create new session if not resumed
   if (!sessionResumed) {
     await sessionManager.create(modelAlias, gitCtx.branch);
+    // Cleanup again after creation so we never exceed max_sessions on disk
+    await SessionManager.cleanup(sessionsDir, config.context.max_sessions);
   }
 
   let identifierDerived = sessionResumed;

@@ -1,6 +1,5 @@
 import { join } from 'node:path';
 import { parseArgs } from './cli/args.js';
-import { Repl } from './cli/repl.js';
 import { Agent } from './core/agent.js';
 import { loadConfig, resolveEnvVarString } from './config/loader.js';
 import { detectGitContext } from './core/git-context.js';
@@ -25,8 +24,14 @@ import { ensureProjectInit } from './core/init.js';
 import { checkForUpdates } from './core/version-check.js';
 import { ApprovalGate } from './core/approval-gate.js';
 import { AgentBridge } from './cli/ui/agent-bridge.js';
+import { renderApp, type AppHandle } from './cli/ui/app.js';
 import { ToolExecutor } from './core/tool-executor.js';
 import { loadAllowList } from './core/allow-list.js';
+import { printBanner } from './cli/banner.js';
+import { TokenTracker } from './core/token-tracker.js';
+import { DEFAULT_PRICING } from './config/pricing.js';
+import { resolveHistoryPath, loadHistory, appendHistory } from './cli/ui/input-history.js';
+import { CompletionEngine, SlashCommandProvider, FilePathProvider } from './cli/ui/completion-providers.js';
 import type { CopairConfig, ProviderConfig } from './config/schema.js';
 
 function resolveModel(
@@ -67,6 +72,30 @@ function getProviderType(
   return 'openai-compatible';
 }
 
+async function resumeSession(
+  sessionManager: SessionManager,
+  agent: Agent,
+  sessionId: string,
+): Promise<boolean> {
+  const restored = await sessionManager.resume(sessionId);
+  if (restored.summary) {
+    // Use summary instead of full history to keep context small
+    agent.getConversation().appendText(
+      'system',
+      `Resuming session "${restored.metadata.identifier}" from ${restored.metadata.lastActive}.\n\n` +
+        `Session summary:\n${restored.summary}\n\nContinue from where we left off.`,
+    );
+  } else {
+    for (const msg of restored.messages) {
+      agent.getConversation().append(msg.role, msg.content);
+    }
+  }
+  console.log(
+    `Resumed session: ${restored.metadata.identifier} (${restored.messages.length} messages)`,
+  );
+  return true;
+}
+
 async function main() {
   const cliOpts = parseArgs();
   checkForUpdates(); // non-blocking background check
@@ -95,6 +124,7 @@ async function main() {
 
   // Agent ↔ UI bridge — events flow through this once ink replaces readline (Phase 2)
   const agentBridge = new AgentBridge();
+  gate.setBridge(agentBridge);
 
   // Deferred MCP initialization — starts after REPL is up
   const mcpManager = new McpClientManager();
@@ -129,13 +159,18 @@ async function main() {
   setKnowledgeBase(knowledgeBase);
   const kbSection = knowledgeBase.getSystemPromptSection();
 
-  // Set up agent
+  // Set up agent (bridge connects renderer events to ink UI)
   const agent = new Agent(provider, modelAlias, toolRegistry, executor, {
+    bridge: agentBridge,
     systemPrompt:
       'You are Copair, an AI coding assistant.\n\n' +
       `Environment:\n` +
       `- Working directory: ${process.cwd()}\n` +
       `- All file paths MUST be absolute (start with ${process.cwd()}/)\n\n` +
+      'Context awareness:\n' +
+      '- Your context includes this system prompt, the full conversation history (all prior messages in this session), and any project knowledge shown below.\n' +
+      '- When asked about context, awareness, or what you know — answer from the conversation history and the knowledge section below. Do NOT read COPAIR_KNOWLEDGE.md or any other file to answer meta-questions about your own state.\n' +
+      '- The knowledge base below (if present) was already loaded from COPAIR_KNOWLEDGE.md at startup. Use the update_knowledge tool only to ADD new entries, not to read existing ones.\n\n' +
       'Rules:\n' +
       '- You MUST use tools to perform actions. NEVER describe or narrate actions — execute them.\n' +
       '- NEVER simulate, roleplay, or pretend to run commands. If you need to do something, call the tool.\n' +
@@ -166,18 +201,17 @@ async function main() {
   // Session cleanup
   await SessionManager.cleanup(sessionsDir, config.context.max_sessions);
 
-  // Handle session resume
+  // Handle session resume — only consider the most recent session with history
   let sessionResumed = false;
+  const sessions = await SessionManager.listSessions(sessionsDir);
+
   if (cliOpts.resume) {
-    // --resume flag provided
-    const sessions = await SessionManager.listSessions(sessionsDir);
+    // --resume flag: find specific session
     let targetId: string | undefined;
 
     if (cliOpts.resume === true || cliOpts.resume === 'latest') {
-      // --resume or --resume latest: pick most recent
       targetId = sessions[0]?.id;
     } else {
-      // --resume <identifier>: find by identifier or UUID prefix
       const match = sessions.find(
         (s) => s.identifier === cliOpts.resume || s.id.startsWith(cliOpts.resume as string),
       );
@@ -185,47 +219,17 @@ async function main() {
     }
 
     if (targetId) {
-      const restored = await sessionManager.resume(targetId);
-      if (restored.summary) {
-        agent.getConversation().appendText(
-          'system',
-          `Resuming session "${restored.metadata.identifier}" from ${restored.metadata.lastActive}.\n\n` +
-            `Session summary:\n${restored.summary}\n\nContinue from where we left off.`,
-        );
-      } else {
-        for (const msg of restored.messages) {
-          agent.getConversation().append(msg.role, msg.content);
-        }
-      }
-      console.log(
-        `Resumed session: ${restored.metadata.identifier} (${restored.messages.length} messages)`,
-      );
-      sessionResumed = true;
+      sessionResumed = await resumeSession(sessionManager, agent, targetId);
     } else {
       console.log('No matching session found. Starting fresh.');
     }
   } else {
-    // Check for existing sessions
-    const sessions = await SessionManager.listSessions(sessionsDir);
-    if (sessions.length > 0) {
-      const selectedId = await presentSessionPicker(sessions);
+    // Auto-resume: only offer the most recent session if it has meaningful history
+    const lastSession = sessions[0];
+    if (lastSession && lastSession.messageCount >= 2) {
+      const selectedId = await presentSessionPicker([lastSession]);
       if (selectedId) {
-        const restored = await sessionManager.resume(selectedId);
-        if (restored.summary) {
-          agent.getConversation().appendText(
-            'system',
-            `Resuming session "${restored.metadata.identifier}" from ${restored.metadata.lastActive}.\n\n` +
-              `Session summary:\n${restored.summary}\n\nContinue from where we left off.`,
-          );
-        } else {
-          for (const msg of restored.messages) {
-            agent.getConversation().append(msg.role, msg.content);
-          }
-        }
-        console.log(
-          `Resumed session: ${restored.metadata.identifier} (${restored.messages.length} messages)`,
-        );
-        sessionResumed = true;
+        sessionResumed = await resumeSession(sessionManager, agent, selectedId);
       }
     }
   }
@@ -247,9 +251,6 @@ async function main() {
     branch: gitCtx.branch,
   };
 
-  // Set up REPL first (needed for command runner ref)
-  let replRef: Repl | null = null;
-
   // Command registry
   const cmdRegistry = new CommandRegistry();
 
@@ -266,116 +267,170 @@ async function main() {
       return !!result;
     },
   );
-  // Will be registered after loadAll()
 
   await cmdRegistry.loadAll();
-  // Register workflow command (overrides placeholder if any)
   (cmdRegistry as unknown as { commands: Map<string, unknown> }).commands.set(
     'workflow',
     workflowCmd,
   );
 
-  // Set up REPL
-  const repl = new Repl(
-    {
-      onMessage: async (input) => {
-        await agent.handleMessage(input);
-        // Save session after each turn
-        const messages = agent.getConversation().getHistory();
-        await sessionManager.save(messages);
+  // Token tracking for usage stats
+  const tokenTracker = new TokenTracker(DEFAULT_PRICING);
 
-        // Derive identifier after first exchange (user + assistant)
-        if (!identifierDerived && messages.length >= 2) {
-          const meta = sessionManager.getMetadata();
-          if (meta) {
-            const identifier = deriveIdentifier(messages, meta.id, gitCtx.branch);
-            sessionManager.updateIdentifier(identifier);
-            await sessionManager.save(messages); // persist updated identifier
-            replRef?.setSessionIdentifier(identifier);
-            identifierDerived = true;
-          }
-        }
-      },
-      onSlashCommand: async (command, args) => {
-        const fullInput = args ? `${command} ${args}` : command;
-        const ctx = { ...agentContext, model: agent.model };
+  // Input history
+  const historyPath = resolveHistoryPath(process.cwd());
+  const inputHistory = loadHistory(historyPath);
 
-        // Special handling for model switching
-        if (command === 'model' && args) {
-          const targetModel = args.trim();
-          try {
-            const {
-              providerName: newProviderName,
-              providerConfig: newProviderConfig,
-            } = resolveModel(config, targetModel);
-            const newProviderType = getProviderType(newProviderName, newProviderConfig);
-            const newProvider = providerRegistry.resolve(
-              newProviderType,
-              resolveProviderConfig(newProviderConfig),
-              targetModel,
-            );
-            await agent.switchModel(newProvider, targetModel);
-            agentContext.model = targetModel;
-            console.log(`Switched to model: ${targetModel}`);
-          } catch (err) {
-            const msg = err instanceof Error ? err.message : String(err);
-            console.log(`Error switching model: ${msg}`);
-          }
-          return;
-        }
-
-        // Special handling for clear
-        if (command === 'clear') {
-          agent.getConversation().clear();
-          console.log('Conversation cleared.');
-          return;
-        }
-
-        // Special handling for exit/quit
-        if (command === 'exit' || command === 'quit') {
-          replRef?.stop();
-          return;
-        }
-
-        const result = await cmdRegistry.execute(fullInput, ctx);
-        if (!result) {
-          console.log(`Unknown command: /${command}. Type /help for available commands.`);
-        } else if (result.prompt) {
-          // Custom command returned a prompt — feed it to the agent
-          await agent.handleMessage(result.prompt);
-        }
-      },
-      onExit: async () => {
-        const messages = agent.getConversation().getHistory();
-        let summarizer: SessionSummarizer | undefined;
-
-        // Resolve summarization model
-        const resolved = await resolveSummarizationModel(
-          config.context.summarization_model,
-          agent.model,
-        );
-        if (resolved) {
-          // Use active provider for summarization (simplest path)
-          summarizer = new SessionSummarizer(provider, resolved.model);
-        }
-
-        await sessionManager.close(messages, summarizer);
-        await mcpManager.shutdown();
-        console.log('\nGoodbye!');
-      },
-    },
-    modelAlias,
-  );
-
-  replRef = repl;
-
-  // Set session identifier on REPL if already known (resumed session)
-  const meta = sessionManager.getMetadata();
-  if (meta && identifierDerived) {
-    repl.setSessionIdentifier(meta.identifier);
+  // Tab completion engine
+  const completionEngine = new CompletionEngine();
+  // Get command names for slash completion
+  const cmdNames = new Map<string, string>();
+  const cmdMap = (cmdRegistry as unknown as { commands: Map<string, { description?: string }> }).commands;
+  for (const [name, cmd] of cmdMap) {
+    cmdNames.set(name, cmd.description ?? '');
   }
+  // Add built-in commands
+  cmdNames.set('exit', 'Exit copair');
+  cmdNames.set('quit', 'Exit copair');
+  cmdNames.set('clear', 'Clear conversation');
+  cmdNames.set('model', 'Switch model');
+  completionEngine.addProvider(new SlashCommandProvider(cmdNames));
+  completionEngine.addProvider(new FilePathProvider(process.cwd()));
 
-  await repl.start();
+  // Banner is printed before ink takes over — ink will manage the terminal from here
+  printBanner(modelAlias);
+  // Small delay to let banner render before ink clears the screen
+  await new Promise((r) => setTimeout(r, 50));
+
+  // ── Exit handler ──────────────────────────────────────────────────────────
+  let appHandle: AppHandle | null = null;
+
+  const doExit = async () => {
+    const messages = agent.getConversation().getHistory();
+    let summarizer: SessionSummarizer | undefined;
+
+    const resolved = await resolveSummarizationModel(
+      config.context.summarization_model,
+      agent.model,
+    );
+    if (resolved) {
+      summarizer = new SessionSummarizer(provider, resolved.model);
+    }
+
+    await sessionManager.close(messages, summarizer);
+    await mcpManager.shutdown();
+    appHandle?.unmount();
+    console.log('\nGoodbye!');
+    process.exit(0);
+  };
+
+  // ── Render ink UI ─────────────────────────────────────────────────────────
+  appHandle = renderApp(agentBridge, modelAlias, {
+    sessionIdentifier: identifierDerived
+      ? sessionManager.getMetadata()?.identifier
+      : undefined,
+    uiConfig: config.ui,
+    history: inputHistory,
+    completionEngine,
+    onHistoryAppend: (entry: string) => {
+      inputHistory.push(entry);
+      appendHistory(historyPath, entry);
+    },
+    onMessage: async (input: string) => {
+      const result = await agent.handleMessage(input);
+
+      // Track token usage and emit to bridge for status bar
+      if (result.usage) {
+        tokenTracker.record(
+          result.usage.inputTokens,
+          result.usage.outputTokens,
+          agent.model,
+          '',
+        );
+        const summary = tokenTracker.getSessionSummary();
+        agentBridge.emit('usage', {
+          inputTokens: result.usage.inputTokens,
+          outputTokens: result.usage.outputTokens,
+          cost: 0,
+          sessionInputTokens: summary.totalInput,
+          sessionOutputTokens: summary.totalOutput,
+          sessionCost: summary.totalCost,
+        });
+      }
+
+      // Signal turn complete so UI re-enables input
+      agentBridge.emit('turn-complete');
+
+      // Save session after each turn
+      const messages = agent.getConversation().getHistory();
+      await sessionManager.save(messages);
+
+      // Derive identifier after first exchange (user + assistant)
+      if (!identifierDerived && messages.length >= 2) {
+        const meta = sessionManager.getMetadata();
+        if (meta) {
+          const identifier = deriveIdentifier(messages, meta.id, gitCtx.branch);
+          sessionManager.updateIdentifier(identifier);
+          await sessionManager.save(messages);
+          appHandle?.updateSession(identifier);
+          identifierDerived = true;
+        }
+      }
+    },
+    onSlashCommand: async (command: string, args?: string) => {
+      const fullInput = args ? `${command} ${args}` : command;
+      const ctx = { ...agentContext, model: agent.model };
+
+      // Special handling for model switching
+      if (command === 'model' && args) {
+        const targetModel = args.trim();
+        try {
+          const {
+            providerName: newProviderName,
+            providerConfig: newProviderConfig,
+          } = resolveModel(config, targetModel);
+          const newProviderType = getProviderType(newProviderName, newProviderConfig);
+          const newProvider = providerRegistry.resolve(
+            newProviderType,
+            resolveProviderConfig(newProviderConfig),
+            targetModel,
+          );
+          await agent.switchModel(newProvider, targetModel);
+          agentContext.model = targetModel;
+          appHandle?.updateModel(targetModel);
+        } catch (err) {
+          const msg = err instanceof Error ? err.message : String(err);
+          agentBridge.emit('error', `Error switching model: ${msg}`);
+        }
+        agentBridge.emit('turn-complete');
+        return;
+      }
+
+      // Special handling for clear
+      if (command === 'clear') {
+        agent.getConversation().clear();
+        agentBridge.emit('turn-complete');
+        return;
+      }
+
+      // Special handling for exit/quit
+      if (command === 'exit' || command === 'quit') {
+        await doExit();
+        return;
+      }
+
+      const result = await cmdRegistry.execute(fullInput, ctx);
+      if (!result) {
+        agentBridge.emit('error', `Unknown command: /${command}. Type /help for available commands.`);
+      } else if (result.prompt) {
+        await agent.handleMessage(result.prompt);
+      }
+      agentBridge.emit('turn-complete');
+    },
+  });
+
+  // Wait for ink to exit (Ctrl+C handled by ink)
+  await appHandle.waitForExit().then(doExit);
 }
 
 main().catch((err) => {

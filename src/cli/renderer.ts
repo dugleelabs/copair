@@ -2,6 +2,7 @@ import chalk from 'chalk';
 import { Spinner } from './spinner.js';
 import { MarkdownWriter } from './markdown.js';
 import type { StreamChunk } from '../providers/interface.js';
+import type { AgentBridge } from './ui/agent-bridge.js';
 
 /**
  * Build a human-readable one-liner for a tool call, e.g.:
@@ -50,7 +51,7 @@ function oneLine(s: string, maxLen = 80): string {
   // Replace newlines with spaces, collapse whitespace
   const flat = s.replace(/\n/g, ' ').replace(/\s+/g, ' ').trim();
   if (flat.length <= maxLen) return flat;
-  return flat.slice(0, maxLen - 1) + '…';
+  return flat.slice(0, maxLen - 1) + '\u2026';
 }
 
 export function formatToolCallFromInput(name: string, input: Record<string, unknown>): string {
@@ -63,6 +64,16 @@ export class Renderer {
   private thinkingSpinner: Spinner | null = null;
   private deltaSpinner: Spinner | null = null;
   private mdWriter: MarkdownWriter | null = null;
+  private bridge: AgentBridge | null;
+
+  /** When bridge is set, suppress direct terminal writes (ink handles display). */
+  private get inkMode(): boolean {
+    return this.bridge !== null;
+  }
+
+  constructor(bridge?: AgentBridge) {
+    this.bridge = bridge ?? null;
+  }
 
   async render(
     stream: AsyncIterableIterator<StreamChunk>,
@@ -77,11 +88,14 @@ export class Renderer {
     let fullText = '';
 
     // Markdown-aware text writer for styled inline code and code blocks
-    this.mdWriter = new MarkdownWriter();
+    if (!this.inkMode) {
+      this.mdWriter = new MarkdownWriter();
 
-    // Start the "thinking" spinner — visible until the first content chunk
-    this.thinkingSpinner = new Spinner(chalk.dim('thinking...'), chalk.magenta);
-    this.thinkingSpinner.start();
+      // Start the "thinking" spinner — visible until the first content chunk
+      this.thinkingSpinner = new Spinner(chalk.dim('thinking...'), chalk.magenta);
+      this.thinkingSpinner.start();
+    }
+    this.bridge?.emit('thinking-start');
 
     for await (const chunk of stream) {
       switch (chunk.type) {
@@ -96,16 +110,17 @@ export class Renderer {
           }
           const raw = chunk.text ?? '';
           const display = textFilter ? textFilter(raw) : raw;
-          if (display) this.mdWriter.write(display);
+          if (display && this.mdWriter) this.mdWriter.write(display);
           fullText += raw; // raw kept for parser
+
+          // Emit to bridge for ink UI
+          if (display) this.bridge?.emit('stream-text', display);
           break;
         }
 
         case 'tool_call_delta':
           this.stopThinkingSpinner();
-          // Show an animated spinner on the first delta for a tool call.
-          // When the full tool_call arrives, we replace it with the final label.
-          if (chunk.toolCall && chunk.toolCall.name !== this.currentToolName) {
+          if (!this.inkMode && chunk.toolCall && chunk.toolCall.name !== this.currentToolName) {
             if (this.deltaSpinner) {
               this.deltaSpinner.stop();
               this.deltaSpinner = null;
@@ -125,7 +140,6 @@ export class Renderer {
         case 'tool_call':
           this.stopThinkingSpinner();
           if (chunk.toolCall) {
-            // Stop the delta spinner and overwrite with the final label
             if (this.deltaSpinner) {
               this.deltaSpinner.stop();
               this.deltaSpinner = null;
@@ -135,7 +149,19 @@ export class Renderer {
             }
             toolCalls.push(chunk.toolCall);
             const label = formatToolCall(chunk.toolCall.name, chunk.toolCall.arguments ?? '{}');
-            process.stderr.write(`  ${chalk.green('●')} ${chalk.white(label)}\n`);
+
+            if (!this.inkMode) {
+              process.stderr.write(`  ${chalk.green('\u25CF')} ${chalk.white(label)}\n`);
+            }
+
+            // Emit to bridge
+            const input = JSON.parse(chunk.toolCall.arguments || '{}') as Record<string, unknown>;
+            this.bridge?.emit('tool-start', {
+              name: chunk.toolCall.name,
+              label,
+              input,
+            });
+
             this.currentToolName = null;
           }
           break;
@@ -148,7 +174,10 @@ export class Renderer {
 
         case 'error':
           this.stopThinkingSpinner();
-          process.stderr.write(chalk.red(`\nError: ${chunk.error}\n`));
+          if (!this.inkMode) {
+            process.stderr.write(chalk.red(`\nError: ${chunk.error}\n`));
+          }
+          this.bridge?.emit('error', chunk.error ?? 'Unknown error');
           break;
 
         case 'done':
@@ -163,9 +192,11 @@ export class Renderer {
     }
 
     // Flush any remaining markdown buffer and add trailing newline
-    this.mdWriter?.flush();
-    this.mdWriter = null;
-    process.stdout.write('\n');
+    if (this.mdWriter) {
+      this.mdWriter.flush();
+      this.mdWriter = null;
+      process.stdout.write('\n');
+    }
 
     return { toolCalls, usage, fullText };
   }
@@ -173,8 +204,13 @@ export class Renderer {
   /**
    * Start an animated spinner for tool execution (green braille dots).
    * Returns the Spinner instance so the caller can stop it.
+   * In ink mode, returns a no-op spinner.
    */
   startToolSpinner(label: string): Spinner {
+    if (this.inkMode) {
+      // Return a no-op spinner — ink handles the display
+      return { start() {}, stop() {} } as Spinner;
+    }
     const spinner = new Spinner(chalk.white(label), chalk.green);
     spinner.start();
     return spinner;
@@ -184,19 +220,25 @@ export class Renderer {
    * Replace the spinner with a completed indicator (dark grey + runtime).
    */
   completeToolExecution(label: string, durationMs: number): void {
-    const dur = formatDuration(durationMs);
-    process.stderr.write(
-      `  ${chalk.gray('✓')} ${chalk.gray(label)} ${chalk.gray.dim(`(${dur})`)}\n`,
-    );
+    if (!this.inkMode) {
+      const dur = formatDuration(durationMs);
+      process.stderr.write(
+        `  ${chalk.gray('\u2713')} ${chalk.gray(label)} ${chalk.gray.dim(`(${dur})`)}\n`,
+      );
+    }
+    this.bridge?.emit('tool-complete', { name: '', label, durationMs });
   }
 
   /**
    * Replace the spinner with a denied marker (red ✗).
    */
   deniedToolExecution(label: string): void {
-    process.stderr.write(
-      `  ${chalk.red('✗')} ${chalk.red(label)} ${chalk.red.dim('denied')}\n`,
-    );
+    if (!this.inkMode) {
+      process.stderr.write(
+        `  ${chalk.red('\u2717')} ${chalk.red(label)} ${chalk.red.dim('denied')}\n`,
+      );
+    }
+    this.bridge?.emit('tool-denied', { name: '', label });
   }
 
   /**
@@ -205,6 +247,7 @@ export class Renderer {
    */
   showGitDiff(output: string): void {
     if (!output.trim()) return;
+    if (this.inkMode) return; // ink UI handles diffs via bridge events
 
     const maxLines = 80;
     const lines = output.split('\n');
@@ -213,7 +256,6 @@ export class Renderer {
     process.stderr.write('\n');
     for (const line of display) {
       if (line.startsWith('+++') || line.startsWith('---')) {
-        // File headers
         process.stderr.write(chalk.bold.white(line) + '\n');
       } else if (line.startsWith('+')) {
         process.stderr.write(chalk.bgGreen.black(line) + '\n');
@@ -246,61 +288,95 @@ export class Renderer {
     oldContent: string | null,
     newContent: string,
   ): void {
-    const maxLines = 30; // Cap diff output
+    if (!this.inkMode) {
+      const maxLines = 30;
+      process.stderr.write(chalk.gray(`  \u2500\u2500 ${filePath} \u2500\u2500\n`));
 
-    process.stderr.write(chalk.gray(`  ── ${filePath} ──\n`));
+      if (oldContent === null) {
+        const lines = newContent.split('\n');
+        const display = lines.slice(0, maxLines);
+        for (const line of display) {
+          process.stderr.write(chalk.bgGreen.black(` + ${line}`) + '\n');
+        }
+        if (lines.length > maxLines) {
+          process.stderr.write(chalk.gray(`  ... ${lines.length - maxLines} more lines\n`));
+        }
+      } else {
+        const oldLines = oldContent.split('\n');
+        const newLines = newContent.split('\n');
 
-    if (oldContent === null) {
-      // New file / full write — show all as additions (capped)
-      const lines = newContent.split('\n');
-      const display = lines.slice(0, maxLines);
-      for (const line of display) {
-        process.stderr.write(chalk.bgGreen.black(` + ${line}`) + '\n');
+        let shown = 0;
+        for (const line of oldLines) {
+          if (shown >= maxLines) break;
+          process.stderr.write(chalk.bgRedBright.black(` - ${line}`) + '\n');
+          shown++;
+        }
+        for (const line of newLines) {
+          if (shown >= maxLines) break;
+          process.stderr.write(chalk.bgGreen.black(` + ${line}`) + '\n');
+          shown++;
+        }
+        const total = oldLines.length + newLines.length;
+        if (total > maxLines) {
+          process.stderr.write(chalk.gray(`  ... ${total - maxLines} more lines\n`));
+        }
       }
-      if (lines.length > maxLines) {
-        process.stderr.write(chalk.gray(`  ... ${lines.length - maxLines} more lines\n`));
-      }
-    } else {
-      // Edit — show removed and added
-      const oldLines = oldContent.split('\n');
-      const newLines = newContent.split('\n');
 
-      let shown = 0;
-      for (const line of oldLines) {
-        if (shown >= maxLines) break;
-        process.stderr.write(chalk.bgRedBright.black(` - ${line}`) + '\n');
-        shown++;
-      }
-      for (const line of newLines) {
-        if (shown >= maxLines) break;
-        process.stderr.write(chalk.bgGreen.black(` + ${line}`) + '\n');
-        shown++;
-      }
-      const total = oldLines.length + newLines.length;
-      if (total > maxLines) {
-        process.stderr.write(chalk.gray(`  ... ${total - maxLines} more lines\n`));
-      }
+      process.stderr.write('\n');
     }
 
-    process.stderr.write('\n');
+    // Emit structured diff to bridge
+    if (this.bridge) {
+      const hunks = [];
+      if (oldContent !== null) {
+        hunks.push({
+          oldStart: 1,
+          newStart: 1,
+          lines: [
+            ...oldContent.split('\n').map((l) => `-${l}`),
+            ...newContent.split('\n').map((l) => `+${l}`),
+          ],
+        });
+      } else {
+        hunks.push({
+          oldStart: 0,
+          newStart: 1,
+          lines: newContent.split('\n').map((l) => `+${l}`),
+        });
+      }
+      this.bridge.emit('diff', { filePath, hunks });
+    }
   }
 
   showTokenUsage(
     requestUsage: { inputTokens: number; outputTokens: number },
     sessionUsage: { totalInput: number; totalOutput: number; totalCost: number },
   ): void {
-    const line = chalk.gray(
-      `[tokens: ${requestUsage.inputTokens.toLocaleString()} in / ${requestUsage.outputTokens.toLocaleString()} out` +
-        ` | session: ${sessionUsage.totalInput.toLocaleString()} in / ${sessionUsage.totalOutput.toLocaleString()} out` +
-        ` | ~$${sessionUsage.totalCost.toFixed(2)}]`,
-    );
-    console.log(line);
+    if (!this.inkMode) {
+      const line = chalk.gray(
+        `[tokens: ${requestUsage.inputTokens.toLocaleString()} in / ${requestUsage.outputTokens.toLocaleString()} out` +
+          ` | session: ${sessionUsage.totalInput.toLocaleString()} in / ${sessionUsage.totalOutput.toLocaleString()} out` +
+          ` | ~$${sessionUsage.totalCost.toFixed(2)}]`,
+      );
+      console.log(line);
+    }
+
+    // Emit usage to bridge
+    this.bridge?.emit('usage', {
+      inputTokens: requestUsage.inputTokens,
+      outputTokens: requestUsage.outputTokens,
+      cost: 0,
+      sessionInputTokens: sessionUsage.totalInput,
+      sessionOutputTokens: sessionUsage.totalOutput,
+      sessionCost: sessionUsage.totalCost,
+    });
   }
 
   showSessionSummary(
     byModel: Map<string, { input: number; output: number; cost: number }>,
     totals: { totalInput: number; totalOutput: number; totalCost: number },
   ): void {
+    if (this.inkMode) return; // ink StatusBar handles this
     console.log(chalk.bold('\nSession Summary'));
     console.log(
       chalk.gray(
@@ -334,6 +410,7 @@ export class Renderer {
     if (this.thinkingSpinner) {
       this.thinkingSpinner.stop();
       this.thinkingSpinner = null;
+      this.bridge?.emit('thinking-stop');
     }
   }
 

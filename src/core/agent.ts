@@ -8,12 +8,14 @@ import { buildToolSystemPrompt, parseToolCallsFromText } from './tool-fallback.j
 import type { ToolCallFormatter } from './formats/interface.js';
 import type { FormatName } from './formats/index.js';
 import { resolveFormatter, buildTextFilter } from './formats/index.js';
+import type { AgentBridge } from '../cli/ui/agent-bridge.js';
 
 export interface AgentOptions {
   systemPrompt?: string;
   maxTokens?: number;
   temperature?: number;
   toolCallFormat?: FormatName;
+  bridge?: AgentBridge;
 }
 
 export class Agent {
@@ -41,7 +43,7 @@ export class Agent {
     this.executor = executor;
     this.conversation = new ConversationManager();
     this.contextWindow = new ContextWindowManager(provider.maxContextWindow);
-    this.renderer = new Renderer();
+    this.renderer = new Renderer(options.bridge);
     this.options = options;
     this.formatter = resolveFormatter(provider.name, model, options.toolCallFormat);
     this.textFilter = buildTextFilter(this.formatter);

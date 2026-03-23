@@ -1,6 +1,7 @@
 import { resolve as resolvePath } from 'node:path';
 import chalk from 'chalk';
 import type { AllowList } from './allow-list.js';
+import type { AgentBridge, ApprovalAnswer } from '../cli/ui/agent-bridge.js';
 
 export type RiskLevel = 'safe' | 'needs-approval';
 export type GateMode = 'ask' | 'auto-approve' | 'deny';
@@ -48,10 +49,26 @@ export class ApprovalGate {
   private allowList: AllowList | null;
   // Trusted path prefixes — file mutations under these paths skip approval
   private trustedPaths = new Set<string>();
+  // Optional bridge for ink-based approval UI
+  private bridge: AgentBridge | null = null;
+  // Pending approval context for bridge-based flow
+  private pendingIndex = 0;
+  private pendingTotal = 0;
 
   constructor(mode: GateMode = 'ask', allowList: AllowList | null = null) {
     this.mode = mode;
     this.allowList = allowList;
+  }
+
+  /** Set the bridge for ink-based approval prompts. */
+  setBridge(bridge: AgentBridge): void {
+    this.bridge = bridge;
+  }
+
+  /** Set context for batch approval counting. */
+  setApprovalContext(index: number, total: number): void {
+    this.pendingIndex = index;
+    this.pendingTotal = total;
   }
 
   /** Register a path as trusted. File mutations under/at this path skip approval. */
@@ -98,31 +115,84 @@ export class ApprovalGate {
     const key = sessionKey(toolName, input);
     if (this.alwaysAllow.has(key)) return true;
 
-    return this.prompt(toolName, input, key);
+    // Bridge-based approval (ink UI): approve-all-for-turn check
+    if (this.bridge?.approveAllForTurn) return true;
+
+    // Bridge-based approval via ink ApprovalHandler
+    if (this.bridge) {
+      return this.bridgePrompt(toolName, input, key);
+    }
+
+    // Legacy fallback: direct stdin prompt
+    return this.legacyPrompt(toolName, input, key);
   }
 
-  private async prompt(
+  /** Bridge-based approval: emit event and await response from ink UI. */
+  private bridgePrompt(
+    toolName: string,
+    input: Record<string, unknown>,
+    key: string,
+  ): Promise<boolean> {
+    return new Promise((resolve) => {
+      const summary = formatSummary(toolName, input);
+
+      this.bridge!.emit('approval-request', {
+        toolName,
+        input,
+        summary,
+        index: this.pendingIndex,
+        total: this.pendingTotal,
+      }, (answer: ApprovalAnswer) => {
+        switch (answer) {
+          case 'allow':
+            resolve(true);
+            break;
+          case 'always':
+            this.alwaysAllow.add(key);
+            resolve(true);
+            break;
+          case 'all':
+            this.bridge!.approveAllForTurn = true;
+            resolve(true);
+            break;
+          case 'similar': {
+            // Extract directory-level key for similar operations
+            const similarKey = similarSessionKey(toolName, input);
+            this.alwaysAllow.add(similarKey);
+            resolve(true);
+            break;
+          }
+          case 'deny':
+          default:
+            resolve(false);
+            break;
+        }
+      });
+    });
+  }
+
+  /** Legacy approval prompt: direct stdin (kept for backward compatibility). */
+  private async legacyPrompt(
     toolName: string,
     input: Record<string, unknown>,
     key: string,
   ): Promise<boolean> {
     const summary = formatSummary(toolName, input);
-    const boxWidth = 56;
-    const topBar = '─'.repeat(boxWidth);
+    const boxWidth = Math.max(summary.length + 6, 56);
+    const topBar = '\u2500'.repeat(boxWidth);
     const pad = ' '.repeat(Math.max(0, boxWidth - summary.length - 2));
 
     process.stdout.write('\n');
-    process.stdout.write(chalk.yellow(`  ┌─ ⚠  Approval required ${'─'.repeat(Math.max(0, boxWidth - 23))}┐\n`));
-    process.stdout.write(chalk.yellow('  │  ') + chalk.white.bold(summary) + chalk.yellow(`${pad}  │\n`));
-    process.stdout.write(chalk.yellow(`  └${topBar}┘\n`));
+    process.stdout.write(chalk.yellow(`  \u250C\u2500 \u26A0  Approval required ${'\u2500'.repeat(Math.max(0, boxWidth - 23))}\u2510\n`));
+    process.stdout.write(chalk.yellow('  \u2502  ') + chalk.white.bold(summary) + chalk.yellow(`${pad}  \u2502\n`));
+    process.stdout.write(chalk.yellow(`  \u2514${topBar}\u2518\n`));
     process.stdout.write(
-      `  ${chalk.green('[y]')} allow   ${chalk.cyan('[a]')} always   ${chalk.red('[n]')} deny  ${chalk.yellow('›')} `,
+      `  ${chalk.green('[y]')} allow   ${chalk.cyan('[a]')} always   ${chalk.red('[n]')} deny  ${chalk.yellow('\u203A')} `,
     );
 
     const answer = await ask();
     if (answer === null) {
-      // Stream closed or Ctrl+C during prompt — treat as deny
-      process.stdout.write(chalk.red('\n  ✗ Denied (interrupted).\n\n'));
+      process.stdout.write(chalk.red('\n  \u2717 Denied (interrupted).\n\n'));
       return false;
     }
 
@@ -130,17 +200,17 @@ export class ApprovalGate {
 
     if (trimmed === 'a' || trimmed === 'always') {
       this.alwaysAllow.add(key);
-      process.stdout.write(chalk.green('  ✓ Always allowed.\n\n'));
+      process.stdout.write(chalk.green('  \u2713 Always allowed.\n\n'));
       return true;
     }
 
     if (trimmed === 'y' || trimmed === 'yes') {
-      process.stdout.write(chalk.green('  ✓ Allowed.\n\n'));
+      process.stdout.write(chalk.green('  \u2713 Allowed.\n\n'));
       return true;
     }
 
     // Any other input (including 'n', 'no', empty Enter) → deny
-    process.stdout.write(chalk.red('  ✗ Denied.\n\n'));
+    process.stdout.write(chalk.red('  \u2717 Denied.\n\n'));
     return false;
   }
 }
@@ -163,7 +233,25 @@ function sessionKey(toolName: string, input: Record<string, unknown>): string {
   return toolName;
 }
 
-function formatSummary(toolName: string, input: Record<string, unknown>): string {
+/**
+ * Directory-level session key for "approve similar" — approves the same
+ * tool in the same directory.
+ */
+function similarSessionKey(toolName: string, input: Record<string, unknown>): string {
+  const filePath = input.file_path ?? input.path;
+  if (typeof filePath === 'string') {
+    const dir = filePath.replace(/\/[^/]*$/, '/');
+    return `${toolName}:${dir}`;
+  }
+  return sessionKey(toolName, input);
+}
+
+/**
+ * Build a human-readable summary for the approval prompt.
+ * NO truncation — the ink UI handles wrapping. The legacy prompt adapts
+ * the box width to fit.
+ */
+export function formatSummary(toolName: string, input: Record<string, unknown>): string {
   let raw: string;
   switch (toolName) {
     case 'bash':  raw = `bash  ${input.command}`; break;
@@ -172,15 +260,12 @@ function formatSummary(toolName: string, input: Record<string, unknown>): string
     case 'edit':  raw = `edit  ${input.file_path}`; break;
     default:      raw = `${toolName}  ${JSON.stringify(input)}`; break;
   }
-  // Collapse newlines and truncate to fit within the approval box
-  const flat = raw.replace(/\n/g, ' ').replace(/\s+/g, ' ').trim();
-  const maxLen = 52;
-  if (flat.length > maxLen) return flat.slice(0, maxLen - 1) + '…';
-  return flat;
+  // Collapse newlines but do NOT truncate — full command visible
+  return raw.replace(/\n/g, ' ').replace(/\s+/g, ' ').trim();
 }
 
 /**
- * Read one line from stdin for the approval prompt.
+ * Read one line from stdin for the legacy approval prompt.
  *
  * Reads raw bytes directly from process.stdin instead of creating a
  * second readline interface. Creating another readline on the same stdin
@@ -198,9 +283,6 @@ function ask(): Promise<string | null> {
       resolved = true;
       process.stdin.removeListener('data', onData);
       process.stdin.removeListener('end', onEnd);
-      // Restore the REPL's readline — it needs stdin paused so it can
-      // call .resume() on its own terms. Without this, the REPL's
-      // readline may never get another 'data' event.
       if (wasRaw !== undefined) process.stdin.setRawMode(wasRaw);
       resolve(value);
     };
@@ -208,33 +290,13 @@ function ask(): Promise<string | null> {
     const onData = (chunk: Buffer) => {
       const str = chunk.toString();
       for (const ch of str) {
-        // Ctrl+C (ETX)
-        if (ch === '\x03') {
-          process.stdout.write('\n');
-          done(null);
-          return;
-        }
-        // Ctrl+D (EOT) on empty buffer
-        if (ch === '\x04') {
-          process.stdout.write('\n');
-          done(null);
-          return;
-        }
-        // Enter
-        if (ch === '\r' || ch === '\n') {
-          process.stdout.write('\n');
-          done(buf);
-          return;
-        }
-        // Backspace
+        if (ch === '\x03') { process.stdout.write('\n'); done(null); return; }
+        if (ch === '\x04') { process.stdout.write('\n'); done(null); return; }
+        if (ch === '\r' || ch === '\n') { process.stdout.write('\n'); done(buf); return; }
         if (ch === '\x7f' || ch === '\b') {
-          if (buf.length > 0) {
-            buf = buf.slice(0, -1);
-            process.stdout.write('\b \b');
-          }
+          if (buf.length > 0) { buf = buf.slice(0, -1); process.stdout.write('\b \b'); }
           continue;
         }
-        // Regular character — echo it
         buf += ch;
         process.stdout.write(ch);
       }
@@ -242,7 +304,6 @@ function ask(): Promise<string | null> {
 
     const onEnd = () => done(null);
 
-    // Switch stdin to raw mode so we get individual keystrokes
     let wasRaw: boolean | undefined;
     if (typeof process.stdin.setRawMode === 'function') {
       wasRaw = process.stdin.isRaw;
@@ -251,7 +312,6 @@ function ask(): Promise<string | null> {
 
     process.stdin.on('data', onData);
     process.stdin.on('end', onEnd);
-    // Ensure stdin is flowing
     process.stdin.resume();
   });
 }

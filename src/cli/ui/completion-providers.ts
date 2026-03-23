@@ -86,6 +86,105 @@ export class SubcommandProvider implements CompletionProvider {
   }
 }
 
+// ── FilePathProvider ────────────────────────────────────────────────────────
+
+export class FilePathProvider implements CompletionProvider {
+  readonly id = 'file-paths';
+  private cwd: string;
+
+  constructor(cwd: string) {
+    this.cwd = cwd;
+  }
+
+  matches(input: string): boolean {
+    // Trigger on path-like tokens (contains / or starts with .)
+    const lastToken = input.split(/\s+/).pop() ?? '';
+    return lastToken.includes('/') || lastToken.startsWith('.');
+  }
+
+  complete(input: string): CompletionItem[] {
+    const lastToken = input.split(/\s+/).pop() ?? '';
+    try {
+      const { readdirSync } = require('node:fs') as typeof import('node:fs');
+      const { join, dirname, basename } = require('node:path') as typeof import('node:path');
+
+      const dir = lastToken.endsWith('/')
+        ? join(this.cwd, lastToken)
+        : join(this.cwd, dirname(lastToken));
+      const prefix = lastToken.endsWith('/') ? '' : basename(lastToken);
+      const beforeToken = input.slice(0, input.length - lastToken.length);
+
+      const entries = readdirSync(dir, { withFileTypes: true });
+      const items: CompletionItem[] = [];
+      for (const entry of entries) {
+        if (entry.name.startsWith('.') && !prefix.startsWith('.')) continue;
+        if (entry.name.toLowerCase().startsWith(prefix.toLowerCase())) {
+          const suffix = entry.isDirectory() ? '/' : '';
+          const relativePath = lastToken.endsWith('/')
+            ? lastToken + entry.name + suffix
+            : dirname(lastToken) + '/' + entry.name + suffix;
+          items.push({
+            value: beforeToken + relativePath,
+            label: entry.name + suffix,
+          });
+        }
+        if (items.length >= 20) break;
+      }
+      return items;
+    } catch {
+      return [];
+    }
+  }
+}
+
+// ── ModelNameProvider ────────────────────────────────────────────────────────
+
+export class ModelNameProvider implements CompletionProvider {
+  readonly id = 'model-names';
+  private models: string[];
+
+  constructor(models: string[]) {
+    this.models = models;
+  }
+
+  matches(input: string): boolean {
+    return input.startsWith('/model ');
+  }
+
+  complete(input: string): CompletionItem[] {
+    const prefix = input.slice('/model '.length).toLowerCase();
+    return this.models
+      .filter((m) => m.toLowerCase().startsWith(prefix))
+      .map((m) => ({ value: `/model ${m}`, label: m }));
+  }
+}
+
+// ── SessionIdProvider ───────────────────────────────────────────────────────
+
+export class SessionIdProvider implements CompletionProvider {
+  readonly id = 'session-ids';
+  private getSessions: () => Array<{ id: string; identifier: string }>;
+
+  constructor(getSessions: () => Array<{ id: string; identifier: string }>) {
+    this.getSessions = getSessions;
+  }
+
+  matches(input: string): boolean {
+    return input.startsWith('/session resume ');
+  }
+
+  complete(input: string): CompletionItem[] {
+    const prefix = input.slice('/session resume '.length).toLowerCase();
+    return this.getSessions()
+      .filter((s) => s.identifier.toLowerCase().startsWith(prefix) || s.id.startsWith(prefix))
+      .map((s) => ({
+        value: `/session resume ${s.identifier}`,
+        label: s.identifier,
+        description: s.id.slice(0, 8),
+      }));
+  }
+}
+
 // ── Completion Engine ───────────────────────────────────────────────────────
 
 export class CompletionEngine {

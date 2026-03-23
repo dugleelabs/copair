@@ -1,15 +1,18 @@
-import React, { useState, useEffect, useCallback } from 'react';
-import { Box, Text, useStdout } from 'ink';
+import React, { useState, useEffect, useCallback, useRef } from 'react';
+import { Box, Text, useStdout, useInput } from 'ink';
 import TextInput from 'ink-text-input';
+import type { CompletionEngine } from './completion-providers.js';
 
 // ── Types ───────────────────────────────────────────────────────────────────
 
 export interface BorderedInputProps {
-  model: string;
   sessionIdentifier?: string;
   bordered?: boolean;
   isActive?: boolean;
+  history?: string[];
+  completionEngine?: CompletionEngine;
   onSubmit: (value: string) => void;
+  onHistoryAppend?: (entry: string) => void;
   onSlashCommand?: (command: string, args?: string) => void;
 }
 
@@ -25,11 +28,13 @@ export function supportsUnicode(): boolean {
 // ── Component ───────────────────────────────────────────────────────────────
 
 export function BorderedInput({
-  model,
   sessionIdentifier,
   bordered = true,
   isActive = true,
+  history = [],
+  completionEngine,
   onSubmit,
+  onHistoryAppend,
   onSlashCommand,
 }: BorderedInputProps) {
   const [value, setValue] = useState('');
@@ -37,6 +42,13 @@ export function BorderedInput({
   const [expanded, setExpanded] = useState(false);
   const { stdout } = useStdout();
   const [columns, setColumns] = useState(stdout?.columns ?? 80);
+
+  // History navigation
+  const historyIdx = useRef(-1); // -1 = current input (not navigating)
+  const savedInput = useRef(''); // saved current input before navigating
+
+  // Tab completion
+  const [completionHint, setCompletionHint] = useState<string | null>(null);
 
   // Track terminal resize
   useEffect(() => {
@@ -46,16 +58,64 @@ export function BorderedInput({
     return () => { stdout.off('resize', onResize); };
   }, [stdout]);
 
+  // Handle up/down arrow for history, tab for completion
+  useInput((_input, key) => {
+    if (!isActive) return;
+
+    // Up arrow — navigate history backward
+    if (key.upArrow && history.length > 0) {
+      if (historyIdx.current === -1) {
+        savedInput.current = value;
+      }
+      const newIdx = Math.min(historyIdx.current + 1, history.length - 1);
+      historyIdx.current = newIdx;
+      setValue(history[history.length - 1 - newIdx]);
+      setCompletionHint(null);
+      return;
+    }
+
+    // Down arrow — navigate history forward
+    if (key.downArrow) {
+      if (historyIdx.current <= 0) {
+        historyIdx.current = -1;
+        setValue(savedInput.current);
+      } else {
+        historyIdx.current--;
+        setValue(history[history.length - 1 - historyIdx.current]);
+      }
+      setCompletionHint(null);
+      return;
+    }
+
+    // Tab — complete
+    if (key.tab && completionEngine && value) {
+      const items = completionEngine.complete(value);
+      if (items.length === 1) {
+        setValue(items[0].value);
+        setCompletionHint(null);
+      } else if (items.length > 1) {
+        const common = completionEngine.commonPrefix(items);
+        if (common.length > value.length) {
+          setValue(common);
+        }
+        setCompletionHint(items.map((i) => i.label).join('  '));
+      }
+      return;
+    }
+  }, { isActive });
+
   const handleChange = useCallback((newValue: string) => {
+    // Reset history navigation on manual edit
+    historyIdx.current = -1;
+    setCompletionHint(null);
+
     // Detect pasted multi-line content
     if (newValue.includes('\n')) {
       setMultiLineBuffer(newValue);
       setExpanded(false);
-      // Show only first line in the input
       const firstLine = newValue.split('\n')[0];
       setValue(firstLine);
     } else {
-      // Single line — clear multi-line buffer if it was set
       if (multiLineBuffer !== null && !newValue.startsWith(value)) {
         setMultiLineBuffer(null);
       }
@@ -67,6 +127,11 @@ export function BorderedInput({
     const trimmed = input.trim();
     if (!trimmed) return;
 
+    // Reset history state
+    historyIdx.current = -1;
+    savedInput.current = '';
+    setCompletionHint(null);
+
     // Handle /expand and /send commands for multi-line buffers
     if (trimmed === '/expand' && multiLineBuffer) {
       setExpanded(!expanded);
@@ -75,6 +140,7 @@ export function BorderedInput({
     }
 
     if (trimmed === '/send' && multiLineBuffer) {
+      onHistoryAppend?.(multiLineBuffer);
       onSubmit(multiLineBuffer);
       setMultiLineBuffer(null);
       setExpanded(false);
@@ -87,17 +153,20 @@ export function BorderedInput({
       const spaceIdx = trimmed.indexOf(' ');
       const cmd = spaceIdx === -1 ? trimmed.slice(1) : trimmed.slice(1, spaceIdx);
       const args = spaceIdx === -1 ? undefined : trimmed.slice(spaceIdx + 1);
+      onHistoryAppend?.(trimmed);
       onSlashCommand(cmd, args);
       setValue('');
       return;
     }
 
     // Submit the full multi-line buffer if we have one, otherwise the single line
-    onSubmit(multiLineBuffer ?? input);
+    const toSubmit = multiLineBuffer ?? input;
+    onHistoryAppend?.(toSubmit);
+    onSubmit(toSubmit);
     setMultiLineBuffer(null);
     setExpanded(false);
     setValue('');
-  }, [multiLineBuffer, expanded, onSubmit, onSlashCommand]);
+  }, [multiLineBuffer, expanded, onSubmit, onSlashCommand, onHistoryAppend]);
 
   // Multi-line info
   const lineCount = multiLineBuffer ? multiLineBuffer.split('\n').length : 0;
@@ -107,9 +176,7 @@ export function BorderedInput({
     return (
       <Box flexDirection="column">
         <Box>
-          <Text color="cyan">copair ({model})</Text>
-          {sessionIdentifier && <Text dimColor> [{sessionIdentifier}]</Text>}
-          <Text color="gray"> {'>'} </Text>
+          <Text color="green" bold>{'>'} </Text>
           <TextInput
             value={value}
             onChange={handleChange}
@@ -120,6 +187,9 @@ export function BorderedInput({
             <Text dimColor> [{lineCount} lines - /expand to view, /send to submit]</Text>
           )}
         </Box>
+        {completionHint && (
+          <Text dimColor>  {completionHint}</Text>
+        )}
         {expanded && multiLineBuffer && (
           <Box flexDirection="column" marginLeft={2}>
             {multiLineBuffer.split('\n').map((line, i) => (
@@ -131,7 +201,7 @@ export function BorderedInput({
     );
   }
 
-  // Bordered layout
+  // Bordered layout — full terminal width
   const borderStyle = supportsUnicode() ? 'round' : 'classic';
   return (
     <Box flexDirection="column">
@@ -139,18 +209,10 @@ export function BorderedInput({
         flexDirection="column"
         borderStyle={borderStyle}
         borderColor="gray"
-        width={Math.min(columns, 120)}
+        width={columns}
         paddingLeft={1}
         paddingRight={1}
       >
-        {/* Header row */}
-        <Box>
-          <Text color="cyan" bold>{model}</Text>
-          {sessionIdentifier && (
-            <Text dimColor> [{sessionIdentifier}]</Text>
-          )}
-        </Box>
-
         {/* Input row */}
         <Box>
           <Text color="green" bold>{'>'} </Text>
@@ -161,6 +223,13 @@ export function BorderedInput({
             focus={isActive}
           />
         </Box>
+
+        {/* Tab completion hint */}
+        {completionHint && (
+          <Box>
+            <Text dimColor>  {completionHint}</Text>
+          </Box>
+        )}
 
         {/* Multi-line indicator */}
         {multiLineBuffer && !expanded && (

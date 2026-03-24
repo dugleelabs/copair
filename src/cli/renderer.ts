@@ -247,34 +247,44 @@ export class Renderer {
    */
   showGitDiff(output: string): void {
     if (!output.trim()) return;
-    if (this.inkMode) return; // ink UI handles diffs via bridge events
 
-    const maxLines = 80;
-    const lines = output.split('\n');
-    const display = lines.slice(0, maxLines);
+    if (!this.inkMode) {
+      const maxLines = 80;
+      const lines = output.split('\n');
+      const display = lines.slice(0, maxLines);
 
-    process.stderr.write('\n');
-    for (const line of display) {
-      if (line.startsWith('+++') || line.startsWith('---')) {
-        process.stderr.write(chalk.bold.white(line) + '\n');
-      } else if (line.startsWith('+')) {
-        process.stderr.write(chalk.bgGreen.black(line) + '\n');
-      } else if (line.startsWith('-')) {
-        process.stderr.write(chalk.bgRedBright.black(line) + '\n');
-      } else if (line.startsWith('@@')) {
-        process.stderr.write(chalk.cyan(line) + '\n');
-      } else if (line.startsWith('diff ')) {
-        process.stderr.write(chalk.bold.yellow(line) + '\n');
-      } else if (line.startsWith('index ')) {
-        process.stderr.write(chalk.gray(line) + '\n');
-      } else {
-        process.stderr.write(chalk.gray(line) + '\n');
+      process.stderr.write('\n');
+      for (const line of display) {
+        if (line.startsWith('+++') || line.startsWith('---')) {
+          process.stderr.write(chalk.bold.white(line) + '\n');
+        } else if (line.startsWith('+')) {
+          process.stderr.write(chalk.bgGreen.black(line) + '\n');
+        } else if (line.startsWith('-')) {
+          process.stderr.write(chalk.bgRedBright.black(line) + '\n');
+        } else if (line.startsWith('@@')) {
+          process.stderr.write(chalk.cyan(line) + '\n');
+        } else if (line.startsWith('diff ')) {
+          process.stderr.write(chalk.bold.yellow(line) + '\n');
+        } else if (line.startsWith('index ')) {
+          process.stderr.write(chalk.gray(line) + '\n');
+        } else {
+          process.stderr.write(chalk.gray(line) + '\n');
+        }
       }
+      if (lines.length > maxLines) {
+        process.stderr.write(chalk.gray(`  ... ${lines.length - maxLines} more lines\n`));
+      }
+      process.stderr.write('\n');
     }
-    if (lines.length > maxLines) {
-      process.stderr.write(chalk.gray(`  ... ${lines.length - maxLines} more lines\n`));
+
+    // Emit to bridge for ink UI
+    if (this.bridge) {
+      const lines = output.split('\n');
+      this.bridge.emit('diff', {
+        filePath: extractDiffFilePath(lines),
+        hunks: [{ oldStart: 0, newStart: 0, lines }],
+      });
     }
-    process.stderr.write('\n');
   }
 
   /**
@@ -431,4 +441,15 @@ export class Renderer {
 function formatDuration(ms: number): string {
   if (ms < 1000) return `${Math.round(ms)}ms`;
   return `${(ms / 1000).toFixed(1)}s`;
+}
+
+/** Extract the file path from a unified diff header, e.g. "diff --git a/foo b/foo" → "foo". */
+function extractDiffFilePath(lines: string[]): string {
+  for (const line of lines) {
+    if (line.startsWith('diff --git')) {
+      const match = line.match(/b\/(.+)$/);
+      if (match) return match[1];
+    }
+  }
+  return 'git diff';
 }

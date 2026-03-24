@@ -1,9 +1,10 @@
 import React, { useState, useEffect, useCallback, useImperativeHandle, forwardRef, useRef } from 'react';
 import { render, Box, Text, Static, useApp, useInput } from 'ink';
-import type { AgentBridge, TokenUsage, ToolCompleteInfo } from './agent-bridge.js';
+import type { AgentBridge, DiffInfo, TokenUsage, ToolCompleteInfo } from './agent-bridge.js';
 import { BorderedInput } from './bordered-input.js';
 import { StatusBar } from './status-bar.js';
 import { ApprovalHandler } from './approval-handler.js';
+import { DiffView } from './diff-view.js';
 import type { CompletionEngine } from './completion-providers.js';
 
 // ── Types ───────────────────────────────────────────────────────────────────
@@ -43,8 +44,9 @@ interface AppState {
 
 interface StaticItem {
   id: number;
-  type: 'text' | 'tool' | 'error' | 'user';
+  type: 'text' | 'tool' | 'error' | 'user' | 'diff';
   content: string;
+  diff?: DiffInfo;
 }
 
 // ── AppHandle (exposed via ref) ─────────────────────────────────────────────
@@ -91,6 +93,155 @@ function useSpinner(active: boolean): { frame: string; elapsed: string } {
     : `${Math.floor(secs / 60)}m ${String(secs % 60).padStart(2, '0')}s`;
 
   return { frame: SPINNER_FRAMES[frameIdx], elapsed: elapsedStr };
+}
+
+// ── Markdown rendering ──────────────────────────────────────────────────
+
+/** Render inline markdown: **bold**, *italic*, `code` */
+function renderInline(text: string): React.ReactNode {
+  const parts: React.ReactNode[] = [];
+  let remaining = text;
+  let key = 0;
+
+  while (remaining.length > 0) {
+    const boldMatch = remaining.match(/^\*\*(.+?)\*\*/);
+    if (boldMatch) {
+      parts.push(<Text key={key++} bold>{boldMatch[1]}</Text>);
+      remaining = remaining.slice(boldMatch[0].length);
+      continue;
+    }
+    const italicMatch = remaining.match(/^\*(.+?)\*/);
+    if (italicMatch) {
+      parts.push(<Text key={key++} italic>{italicMatch[1]}</Text>);
+      remaining = remaining.slice(italicMatch[0].length);
+      continue;
+    }
+    const codeMatch = remaining.match(/^`([^`]+)`/);
+    if (codeMatch) {
+      parts.push(<Text key={key++} color="cyan" bold>{codeMatch[1]}</Text>);
+      remaining = remaining.slice(codeMatch[0].length);
+      continue;
+    }
+    const nextSpecial = remaining.search(/[*`]/);
+    if (nextSpecial === -1) {
+      parts.push(remaining);
+      break;
+    }
+    if (nextSpecial === 0) {
+      parts.push(remaining[0]);
+      remaining = remaining.slice(1);
+    } else {
+      parts.push(remaining.slice(0, nextSpecial));
+      remaining = remaining.slice(nextSpecial);
+    }
+  }
+  return parts.length === 1 ? parts[0] : <>{parts}</>;
+}
+
+/**
+ * Parse markdown text into block-level elements:
+ * headers, code blocks, lists, horizontal rules, and paragraphs.
+ */
+function renderMarkdownBlocks(text: string): React.ReactNode[] {
+  const lines = text.split('\n');
+  const elements: React.ReactNode[] = [];
+  let key = 0;
+  let i = 0;
+
+  while (i < lines.length) {
+    const line = lines[i];
+    const trimmed = line.trim();
+
+    // Code block
+    if (trimmed.startsWith('```')) {
+      const lang = trimmed.slice(3).trim();
+      const codeLines: string[] = [];
+      i++;
+      while (i < lines.length && !lines[i].trim().startsWith('```')) {
+        codeLines.push(lines[i]);
+        i++;
+      }
+      if (i < lines.length) i++; // skip closing ```
+      elements.push(
+        <Box key={key++} flexDirection="column" marginY={1}>
+          {lang && <Text dimColor>{lang}</Text>}
+          <Box borderStyle="single" borderColor="gray" paddingX={1} flexDirection="column">
+            {codeLines.map((cl, ci) => (
+              <Text key={ci} color="white">{cl}</Text>
+            ))}
+          </Box>
+        </Box>,
+      );
+      continue;
+    }
+
+    // Headers
+    const headerMatch = trimmed.match(/^(#{1,6})\s+(.+)/);
+    if (headerMatch) {
+      const level = headerMatch[1].length;
+      const content = headerMatch[2];
+      elements.push(
+        <Text key={key++} bold color={level <= 2 ? 'white' : undefined}>
+          {level <= 2 ? '\n' : ''}{content}
+        </Text>,
+      );
+      i++;
+      continue;
+    }
+
+    // Horizontal rule
+    if (/^[-*_]{3,}$/.test(trimmed)) {
+      elements.push(
+        <Text key={key++} dimColor>{'\u2500'.repeat(40)}</Text>,
+      );
+      i++;
+      continue;
+    }
+
+    // Unordered list item
+    const ulMatch = trimmed.match(/^[-*+]\s+(.*)/);
+    if (ulMatch) {
+      elements.push(
+        <Text key={key++} wrap="wrap">  {'\u2022'} {renderInline(ulMatch[1])}</Text>,
+      );
+      i++;
+      continue;
+    }
+
+    // Ordered list item
+    const olMatch = trimmed.match(/^(\d+)[.)]\s+(.*)/);
+    if (olMatch) {
+      elements.push(
+        <Text key={key++} wrap="wrap">  {olMatch[1]}. {renderInline(olMatch[2])}</Text>,
+      );
+      i++;
+      continue;
+    }
+
+    // Blockquote
+    if (trimmed.startsWith('>')) {
+      const content = trimmed.replace(/^>\s?/, '');
+      elements.push(
+        <Text key={key++} dimColor wrap="wrap">  {'\u2502'} {renderInline(content)}</Text>,
+      );
+      i++;
+      continue;
+    }
+
+    // Empty line
+    if (trimmed === '') {
+      i++;
+      continue;
+    }
+
+    // Regular paragraph
+    elements.push(
+      <Text key={key++} wrap="wrap">{renderInline(line)}</Text>,
+    );
+    i++;
+  }
+
+  return elements;
 }
 
 // ── CopairApp ───────────────────────────────────────────────────────────────
@@ -230,6 +381,13 @@ const CopairApp = forwardRef<AppImperativeHandle, CopairAppProps>(function Copai
       ]);
     };
 
+    const onDiff = (diff: DiffInfo) => {
+      setStaticItems((items) => [
+        ...items,
+        { id: nextId.current++, type: 'diff', content: '', diff },
+      ]);
+    };
+
     const onError = (message: string) => {
       setStaticItems((items) => [
         ...items,
@@ -265,6 +423,7 @@ const CopairApp = forwardRef<AppImperativeHandle, CopairAppProps>(function Copai
     bridge.on('tool-start', onToolStart);
     bridge.on('tool-complete', onToolComplete);
     bridge.on('tool-denied', onToolDenied);
+    bridge.on('diff', onDiff);
     bridge.on('error', onError);
     bridge.on('usage', onUsage);
     bridge.on('turn-complete', onTurnComplete);
@@ -275,6 +434,7 @@ const CopairApp = forwardRef<AppImperativeHandle, CopairAppProps>(function Copai
       bridge.off('tool-start', onToolStart);
       bridge.off('tool-complete', onToolComplete);
       bridge.off('tool-denied', onToolDenied);
+      bridge.off('diff', onDiff);
       bridge.off('error', onError);
       bridge.off('usage', onUsage);
       bridge.off('turn-complete', onTurnComplete);
@@ -309,9 +469,17 @@ const CopairApp = forwardRef<AppImperativeHandle, CopairAppProps>(function Copai
               return <Text key={item.id} color="red">{item.content}</Text>;
             case 'tool':
               return <Text key={item.id} dimColor>  {item.content}</Text>;
+            case 'diff':
+              return item.diff
+                ? <DiffView key={item.id} diff={item.diff} />
+                : null;
             case 'text':
             default:
-              return <Text key={item.id} wrap="wrap">{item.content}</Text>;
+              return (
+                <Box key={item.id} flexDirection="column">
+                  {renderMarkdownBlocks(item.content)}
+                </Box>
+              );
           }
         }}
       </Static>
@@ -325,7 +493,9 @@ const CopairApp = forwardRef<AppImperativeHandle, CopairAppProps>(function Copai
 
       {/* Live streaming text */}
       {liveText && (
-        <Text wrap="wrap">{liveText}</Text>
+        <Box flexDirection="column">
+          {renderMarkdownBlocks(liveText)}
+        </Box>
       )}
 
       {/* Live tool indicator */}

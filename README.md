@@ -1,5 +1,5 @@
 <p align="center">
-  <img src="https://assets.dugleelabs.com/Copair_Logo_cc1a297c94.png" width="160" alt="Copair Logo" />
+  <img src="https://assets.dugleelabs.com/Copair_Logo_f8a34bc455.png" width="160" alt="Copair Logo" />
 </p>
 
 <p align="center">

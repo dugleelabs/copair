@@ -85,8 +85,8 @@ function loadYamlFile(filePath: string): Record<string, unknown> | null {
 export function loadConfig(projectDir?: string): CopairConfig {
   const globalPath = resolve(homedir(), '.copair', 'config.yaml');
   const projectPath = projectDir
-    ? resolve(projectDir, '.copair.yaml')
-    : resolve(process.cwd(), '.copair.yaml');
+    ? resolve(projectDir, '.copair', 'config.yaml')
+    : resolve(process.cwd(), '.copair', 'config.yaml');
 
   const globalConfig = loadYamlFile(globalPath);
   const projectConfig = loadYamlFile(projectPath);

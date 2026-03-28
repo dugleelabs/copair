@@ -16,8 +16,8 @@ describe('ApprovalGate — trusted paths', () => {
 
   it('allows exact file match for trusted path', () => {
     const gate = new ApprovalGate('ask');
-    gate.addTrustedPath('/project/.copair.yaml');
-    expect(gate.isTrustedPath('write', { file_path: '/project/.copair.yaml' })).toBe(true);
+    gate.addTrustedPath('/project/.copair/config.yaml');
+    expect(gate.isTrustedPath('write', { file_path: '/project/.copair/config.yaml' })).toBe(true);
   });
 
   it('blocks writes outside trusted paths', () => {
@@ -68,19 +68,19 @@ describe('ApprovalGate — trusted paths', () => {
     expect(allowed).toBe(false);
   });
 
-  it('.copair.yaml exact match works in deny mode', async () => {
+  it('exact file match works in deny mode', async () => {
     const gate = new ApprovalGate('deny');
-    gate.addTrustedPath('/project/.copair.yaml');
-    const allowed = await gate.allow('write', { file_path: '/project/.copair.yaml' });
+    gate.addTrustedPath('/project/.copair/config.yaml');
+    const allowed = await gate.allow('write', { file_path: '/project/.copair/config.yaml' });
     expect(allowed).toBe(true);
   });
 
   it('supports multiple trusted paths', () => {
     const gate = new ApprovalGate('ask');
     gate.addTrustedPath('/project/.copair');
-    gate.addTrustedPath('/project/.copair.yaml');
+    gate.addTrustedPath('/project/COPAIR_KNOWLEDGE.md');
     expect(gate.isTrustedPath('write', { file_path: '/project/.copair/foo' })).toBe(true);
-    expect(gate.isTrustedPath('write', { file_path: '/project/.copair.yaml' })).toBe(true);
+    expect(gate.isTrustedPath('write', { file_path: '/project/COPAIR_KNOWLEDGE.md' })).toBe(true);
     expect(gate.isTrustedPath('write', { file_path: '/project/src/foo.ts' })).toBe(false);
   });
 });

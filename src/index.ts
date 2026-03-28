@@ -20,7 +20,6 @@ import { KnowledgeBase } from './core/knowledge-base.js';
 import { setKnowledgeBase } from './tools/update-knowledge.js';
 import { SessionSummarizer, resolveSummarizationModel } from './core/session-summarizer.js';
 import { setSessionManagerRef } from './commands/builtins/session.js';
-import { ensureProjectInit } from './core/init.js';
 import { checkForUpdates } from './core/version-check.js';
 import { ApprovalGate } from './core/approval-gate.js';
 import { AgentBridge } from './cli/ui/agent-bridge.js';
@@ -33,6 +32,12 @@ import { DEFAULT_PRICING } from './config/pricing.js';
 import { resolveHistoryPath, loadHistory, appendHistory } from './cli/ui/input-history.js';
 import { CompletionEngine, SlashCommandProvider, FilePathProvider } from './cli/ui/completion-providers.js';
 import type { CopairConfig, ProviderConfig } from './config/schema.js';
+import { GlobalInitManager } from './init/GlobalInitManager.js';
+import { ProjectInitManager, DECLINED_MESSAGE } from './init/ProjectInitManager.js';
+import { GitignoreManager } from './init/GitignoreManager.js';
+import { KnowledgeManager } from './knowledge/KnowledgeManager.js';
+import { KnowledgeSetupFlow } from './knowledge/KnowledgeSetupFlow.js';
+import { isCI } from './utils/environmentUtils.js';
 
 function resolveModel(
   config: CopairConfig,
@@ -99,6 +104,27 @@ async function resumeSession(
 async function main() {
   const cliOpts = parseArgs();
   checkForUpdates(); // non-blocking background check
+
+  const ci = isCI();
+  const cwd = process.cwd();
+
+  // ── Step 1: Global init (first-ever machine startup) ──────────────────────
+  const globalInitManager = new GlobalInitManager();
+  await globalInitManager.check({ ci });
+
+  // ── Step 2: Project trust + init ──────────────────────────────────────────
+  const projectInitManager = new ProjectInitManager();
+  const projectInit = await projectInitManager.check(cwd, { ci });
+  if (projectInit.declined) {
+    console.log(DECLINED_MESSAGE);
+    process.exit(0);
+  }
+
+  // ── Step 3: Gitignore (runs every startup — skips silently if covered) ────
+  const gitignoreManager = new GitignoreManager();
+  await gitignoreManager.ensureCovered(cwd, { ci });
+
+  // ── Step 4: Config load ────────────────────────────────────────────────────
   const config = loadConfig();
 
   const { providerName, modelAlias, providerConfig } = resolveModel(
@@ -141,23 +167,38 @@ async function main() {
     });
   }
 
-  // Auto-init .copair/ scaffolding on first launch
-  const firstInit = ensureProjectInit(process.cwd());
-  if (firstInit) {
-    console.log('Initialized .copair/ for this project. Config: .copair.yaml');
-  }
-
   // Trust .copair/ directory so scaffolding writes skip approval (even in deny mode)
-  gate.addTrustedPath(join(process.cwd(), '.copair'));
-  gate.addTrustedPath(join(process.cwd(), '.copair.yaml'));
+  gate.addTrustedPath(join(cwd, '.copair'));
 
   // Detect git context
-  const gitCtx = detectGitContext(process.cwd());
+  const gitCtx = detectGitContext(cwd);
 
-  // Initialize knowledge base
-  const knowledgeBase = new KnowledgeBase(process.cwd(), config.context.knowledge_max_size);
+  // ── Step 5: Knowledge load + inject ───────────────────────────────────────
+  const knowledgeManager = new KnowledgeManager({
+    warn_size_kb: config.knowledge.warn_size_kb,
+    max_size_kb: config.knowledge.max_size_kb,
+  });
+  const knowledgeResult = knowledgeManager.load(cwd);
+  let knowledgePrefix = '';
+
+  if (knowledgeResult.found && knowledgeResult.content) {
+    knowledgeManager.checkSizeBudget(knowledgeResult.sizeBytes);
+    knowledgePrefix = knowledgeManager.injectIntoSystemPrompt(knowledgeResult.content);
+  } else if (!ci) {
+    const setupFlow = new KnowledgeSetupFlow();
+    const written = await setupFlow.run(cwd);
+    if (written) {
+      const refreshed = knowledgeManager.load(cwd);
+      if (refreshed.found && refreshed.content) {
+        knowledgeManager.checkSizeBudget(refreshed.sizeBytes);
+        knowledgePrefix = knowledgeManager.injectIntoSystemPrompt(refreshed.content);
+      }
+    }
+  }
+
+  // Keep legacy KnowledgeBase for the update_knowledge tool (will be replaced in a follow-up)
+  const knowledgeBase = new KnowledgeBase(cwd, config.context.knowledge_max_size);
   setKnowledgeBase(knowledgeBase);
-  const kbSection = knowledgeBase.getSystemPromptSection();
 
   // Set up agent (bridge connects renderer events to ink UI)
   const agent = new Agent(provider, modelAlias, toolRegistry, executor, {
@@ -165,12 +206,14 @@ async function main() {
     systemPrompt:
       'You are Copair, an AI coding assistant.\n\n' +
       `Environment:\n` +
-      `- Working directory: ${process.cwd()}\n` +
-      `- All file paths MUST be absolute (start with ${process.cwd()}/)\n\n` +
+      `- Working directory: ${cwd}\n` +
+      `- All file paths MUST be absolute (start with ${cwd}/)\n\n` +
+      // [2] Knowledge block — injected before file context
+      knowledgePrefix +
       'Context awareness:\n' +
-      '- Your context includes this system prompt, the full conversation history (all prior messages in this session), and any project knowledge shown below.\n' +
-      '- When asked about context, awareness, or what you know — answer from the conversation history and the knowledge section below. Do NOT read COPAIR_KNOWLEDGE.md or any other file to answer meta-questions about your own state.\n' +
-      '- The knowledge base below (if present) was already loaded from COPAIR_KNOWLEDGE.md at startup. Use the update_knowledge tool only to ADD new entries, not to read existing ones.\n\n' +
+      '- Your context includes this system prompt, the full conversation history (all prior messages in this session), and any project knowledge shown above in <knowledge> tags.\n' +
+      '- When asked about context, awareness, or what you know — answer from the conversation history and the knowledge section. Do NOT read COPAIR_KNOWLEDGE.md to answer meta-questions about your own state.\n' +
+      '- COPAIR_KNOWLEDGE.md is a navigation map, not a context dump. Never write ephemeral notes or session context into it. Propose targeted diffs only when structure, conventions, or entry points change.\n\n' +
       'Rules:\n' +
       '- You MUST use tools to perform actions. NEVER describe or narrate actions — execute them.\n' +
       '- NEVER simulate, roleplay, or pretend to run commands. If you need to do something, call the tool.\n' +
@@ -178,25 +221,23 @@ async function main() {
       '- If a tool returns an error, adjust your approach — do NOT repeat the same call.\n\n' +
       'Work habits:\n' +
       '- Read before editing. Keep changes minimal.\n' +
-      '- Auto-commit each discrete feature, fix, or refactor. Do not batch unrelated changes.\n' +
-      '- When you learn something project-specific (conventions, patterns, architectural decisions), use the update_knowledge tool to record it.\n\n' +
+      '- Auto-commit each discrete feature, fix, or refactor. Do not batch unrelated changes.\n\n' +
       'Git:\n' +
       '- Branches: <type>/<kebab-desc> (feat, fix, chore, docs, refactor, test, perf)\n' +
       '- Commits: <type>(<scope>): <imperative subject, max 72 chars>\n' +
       '  Body: 2-3 concise bullets. Co-authored-by is auto-appended.\n' +
-      '- NEVER use --no-verify, --force, or --no-gpg-sign.' +
-      kbSection,
+      '- NEVER use --no-verify, --force, or --no-gpg-sign.',
   });
 
   // Initialize session manager
-  const sessionManager = new SessionManager(process.cwd());
-  const sessionsDir = resolveSessionsDir(process.cwd());
+  const sessionManager = new SessionManager(cwd);
+  const sessionsDir = resolveSessionsDir(cwd);
 
   // Git tracking warning
-  warnIfSessionsTracked(process.cwd());
+  warnIfSessionsTracked(cwd);
 
   // Migration check
-  await SessionManager.migrateGlobalRecovery(sessionsDir, process.cwd());
+  await SessionManager.migrateGlobalRecovery(sessionsDir, cwd);
 
   // Session cleanup
   await SessionManager.cleanup(sessionsDir, config.context.max_sessions);
@@ -248,7 +289,7 @@ async function main() {
 
   // Build agent context for commands
   const agentContext = {
-    cwd: process.cwd(),
+    cwd,
     model: modelAlias,
     branch: gitCtx.branch,
   };
@@ -280,7 +321,7 @@ async function main() {
   const tokenTracker = new TokenTracker(DEFAULT_PRICING);
 
   // Input history
-  const historyPath = resolveHistoryPath(process.cwd());
+  const historyPath = resolveHistoryPath(cwd);
   const inputHistory = loadHistory(historyPath);
 
   // Tab completion engine
@@ -297,7 +338,7 @@ async function main() {
   cmdNames.set('clear', 'Clear conversation');
   cmdNames.set('model', 'Switch model');
   completionEngine.addProvider(new SlashCommandProvider(cmdNames));
-  completionEngine.addProvider(new FilePathProvider(process.cwd()));
+  completionEngine.addProvider(new FilePathProvider(cwd));
 
   // Banner is printed before ink takes over — ink will manage the terminal from here
   printBanner(modelAlias);

@@ -48,7 +48,7 @@ export class ProjectInitManager {
       return { alreadyInitialised: false, declined: true, created: false };
     }
 
-    const answer = await prompt('Initialise Copair in this folder? (y/N) ');
+    const answer = await prompt('Trust this folder and allow Copair to run here? (y/N) ');
     const accepted = answer === 'y' || answer === 'yes';
 
     if (!accepted) {

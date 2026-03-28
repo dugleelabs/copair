@@ -6,6 +6,7 @@ import type {
   ProviderOptions,
   ToolDefinition,
 } from './interface.js';
+import { NATIVE_SEARCH_MARKER } from './interface.js';
 import type { ProviderConfig } from '../config/schema.js';
 
 function toAnthropicMessages(
@@ -46,16 +47,26 @@ function toAnthropicMessages(
   return result;
 }
 
-type AnthropicToolParam = Anthropic.Tool | { type: 'web_search_20250305'; name: 'web_search' };
+interface ToAnthropicToolsResult {
+  tools: Anthropic.Messages.Tool[] | undefined;
+  /** Tool names that are handled server-side — no executor round-trip needed. */
+  builtInToolNames: Set<string>;
+}
 
 function toAnthropicTools(
   tools: ToolDefinition[],
-): AnthropicToolParam[] | undefined {
-  if (tools.length === 0) return undefined;
-  return tools.map((t) => {
-    // Detect web_search tool — pass through natively for Anthropic
-    if (t.name === 'web_search') {
-      return { type: 'web_search_20250305' as const, name: 'web_search' as const };
+): ToAnthropicToolsResult {
+  if (tools.length === 0) return { tools: undefined, builtInToolNames: new Set() };
+
+  const builtInToolNames = new Set<string>();
+  const converted = tools.map((t): Anthropic.Messages.Tool => {
+    if (t.name === NATIVE_SEARCH_MARKER) {
+      // Server-side built-in search — handled by Anthropic, no executor round-trip
+      builtInToolNames.add('web_search');
+      return {
+        type: 'web_search_20250305',
+        name: 'web_search',
+      } as unknown as Anthropic.Messages.Tool;
     }
     return {
       name: t.name,
@@ -63,6 +74,8 @@ function toAnthropicTools(
       input_schema: t.inputSchema as Anthropic.Tool.InputSchema,
     };
   });
+
+  return { tools: converted, builtInToolNames };
 }
 
 export function createAnthropicProvider(
@@ -85,6 +98,7 @@ export function createAnthropicProvider(
     name: 'anthropic',
     supportsToolCalling: true,
     supportsStreaming: true,
+    supportsNativeSearch: true,
     maxContextWindow,
 
     async *chat(
@@ -93,7 +107,7 @@ export function createAnthropicProvider(
       options: ProviderOptions,
     ): AsyncIterableIterator<StreamChunk> {
       const anthropicMessages = toAnthropicMessages(messages);
-      const anthropicTools = toAnthropicTools(tools) as Anthropic.Tool[] | undefined;
+      const { tools: anthropicTools, builtInToolNames } = toAnthropicTools(tools);
 
       const systemPrompt =
         options.systemPrompt ??
@@ -134,14 +148,17 @@ export function createAnthropicProvider(
               yield { type: 'text', text: event.delta.text };
             } else if (event.delta.type === 'input_json_delta') {
               currentToolArgs += event.delta.partial_json;
-              yield {
-                type: 'tool_call_delta',
-                toolCall: {
-                  id: currentToolId,
-                  name: currentToolName,
-                  arguments: event.delta.partial_json,
-                },
-              };
+              // Skip delta emission for server-side built-in tools (no executor needed)
+              if (!builtInToolNames.has(currentToolName)) {
+                yield {
+                  type: 'tool_call_delta',
+                  toolCall: {
+                    id: currentToolId,
+                    name: currentToolName,
+                    arguments: event.delta.partial_json,
+                  },
+                };
+              }
             }
           }
 
@@ -150,14 +167,28 @@ export function createAnthropicProvider(
             currentToolId &&
             currentToolName
           ) {
-            yield {
-              type: 'tool_call',
-              toolCall: {
-                id: currentToolId,
-                name: currentToolName,
-                arguments: currentToolArgs,
-              },
-            };
+            if (builtInToolNames.has(currentToolName)) {
+              // Server-side built-in tool — emit with the sentinel name so the agent
+              // can display it in the spinner without running it through the executor.
+              yield {
+                type: 'tool_call',
+                toolCall: {
+                  id: currentToolId,
+                  name: NATIVE_SEARCH_MARKER,
+                  arguments: currentToolArgs,
+                  metadata: { builtIn: true },
+                },
+              };
+            } else {
+              yield {
+                type: 'tool_call',
+                toolCall: {
+                  id: currentToolId,
+                  name: currentToolName,
+                  arguments: currentToolArgs,
+                },
+              };
+            }
             currentToolId = '';
             currentToolName = '';
             currentToolArgs = '';

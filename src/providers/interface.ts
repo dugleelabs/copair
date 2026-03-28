@@ -1,3 +1,10 @@
+/**
+ * Sentinel tool name injected by the agent when it wants the provider to fall
+ * back to its built-in native search. Each provider translates this marker into
+ * its own server-side search mechanism (e.g., Anthropic's web_search_20250305).
+ */
+export const NATIVE_SEARCH_MARKER = '_native_web_search';
+
 export interface Message {
   role: 'user' | 'assistant' | 'system';
   content: ContentBlock[];
@@ -37,6 +44,8 @@ export interface Provider {
   readonly supportsToolCalling: boolean;
   readonly supportsStreaming: boolean;
   readonly maxContextWindow: number;
+  /** When true, the provider can fall back to a built-in web search tool when the agent's configured web search fails. */
+  readonly supportsNativeSearch?: boolean;
 
   chat(
     messages: Message[],

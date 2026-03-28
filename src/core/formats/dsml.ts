@@ -31,6 +31,7 @@ const DSML_MARKUP_PATTERN =
 export class DsmlFormatter implements ToolCallFormatter {
   readonly name = 'dsml';
   readonly markupPattern = DSML_MARKUP_PATTERN;
+  readonly suppressAfterMatch = true;
 
   parse(text: string): { toolCalls: ParsedToolCall[]; remainingText: string } {
     const toolCalls: ParsedToolCall[] = [];
@@ -102,6 +103,11 @@ export class DsmlFormatter implements ToolCallFormatter {
       })
       .join('\n\n');
 
+    const hasWebSearch = tools.some((t) => t.name === 'web_search');
+    const webSearchPriority = hasWebSearch
+      ? '\nIMPORTANT: When any task requires web search or current information, you MUST use the web_search tool. Never rely on internal knowledge for facts that may have changed. The agent will execute the search and return real results.\n'
+      : '';
+
     return `
 You have access to tools. To call a tool, use DSML format:
 
@@ -110,7 +116,7 @@ You have access to tools. To call a tool, use DSML format:
 <\uFF5CDSML\uFF5Cparameter name="param" string="true">value<\uFF5CDSML\uFF5Cparameter>
 </\uFF5CDSML\uFF5Cinvoke>
 </\uFF5CDSML\uFF5Cfunction_calls>
-
+${webSearchPriority}
 ## Tools
 
 ${toolDescriptions}

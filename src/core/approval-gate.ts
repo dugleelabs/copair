@@ -3,7 +3,7 @@ import chalk from 'chalk';
 import type { AllowList } from './allow-list.js';
 import type { AgentBridge, ApprovalAnswer } from '../cli/ui/agent-bridge.js';
 
-export type RiskLevel = 'safe' | 'needs-approval';
+export type RiskLevel = 'safe' | 'needs-approval' | 'always-ask';
 export type GateMode = 'ask' | 'auto-approve' | 'deny';
 
 /**
@@ -26,6 +26,9 @@ const RISK_TABLE: Record<string, (input: Record<string, unknown>) => RiskLevel> 
 
   // ── Arbitrary shell: always needs approval ──────────────────────────────
   bash: () => 'needs-approval',
+
+  // ── Web search: always prompt even in auto-approve (network + token cost) ──
+  web_search: (): RiskLevel => 'always-ask',
 
   // ── Git: split by subcommand ────────────────────────────────────────────
   git: (input) => {
@@ -106,8 +109,10 @@ export class ApprovalGate {
     // Trusted paths bypass even deny mode — scaffolding writes must always work
     if (this.isTrustedPath(toolName, input)) return true;
     if (this.mode === 'deny') return false;
-    if (this.classify(toolName, input) === 'safe') return true;
-    if (this.mode === 'auto-approve') return true;
+    const risk = this.classify(toolName, input);
+    if (risk === 'safe') return true;
+    // 'always-ask' bypasses auto-approve — these tools always require human confirmation
+    if (this.mode === 'auto-approve' && risk !== 'always-ask') return true;
 
     // File-based allow list — pre-approved operations bypass the prompt
     if (this.allowList?.matches(toolName, input)) return true;
@@ -118,13 +123,15 @@ export class ApprovalGate {
     // Bridge-based approval (ink UI): approve-all-for-turn check
     if (this.bridge?.approveAllForTurn) return true;
 
+    const defaultAllow = risk === 'always-ask';
+
     // Bridge-based approval via ink ApprovalHandler
     if (this.bridge) {
       return this.bridgePrompt(toolName, input, key);
     }
 
     // Legacy fallback: direct stdin prompt
-    return this.legacyPrompt(toolName, input, key);
+    return this.legacyPrompt(toolName, input, key, defaultAllow);
   }
 
   /** Bridge-based approval: emit event and await response from ink UI. */
@@ -171,23 +178,31 @@ export class ApprovalGate {
     });
   }
 
-  /** Legacy approval prompt: direct stdin (kept for backward compatibility). */
+  /** Legacy approval prompt: direct stdin (kept for backward compatibility).
+   *
+   * @param defaultAllow  When true (used for `always-ask` tools like web_search),
+   *   pressing Enter without typing confirms the action.  For all other tools the
+   *   safe default is to deny on empty input.
+   */
   private async legacyPrompt(
     toolName: string,
     input: Record<string, unknown>,
     key: string,
+    defaultAllow = false,
   ): Promise<boolean> {
     const summary = formatSummary(toolName, input);
     const boxWidth = Math.max(summary.length + 6, 56);
     const topBar = '\u2500'.repeat(boxWidth);
     const pad = ' '.repeat(Math.max(0, boxWidth - summary.length - 2));
 
+    const allowLabel = defaultAllow ? chalk.green('[y/\u23ce]') : chalk.green('[y]');
+
     process.stdout.write('\n');
     process.stdout.write(chalk.yellow(`  \u250C\u2500 \u26A0  Approval required ${'\u2500'.repeat(Math.max(0, boxWidth - 23))}\u2510\n`));
     process.stdout.write(chalk.yellow('  \u2502  ') + chalk.white.bold(summary) + chalk.yellow(`${pad}  \u2502\n`));
     process.stdout.write(chalk.yellow(`  \u2514${topBar}\u2518\n`));
     process.stdout.write(
-      `  ${chalk.green('[y]')} allow   ${chalk.cyan('[a]')} always   ${chalk.red('[n]')} deny  ${chalk.yellow('\u203A')} `,
+      `  ${allowLabel} allow   ${chalk.cyan('[a]')} always   ${chalk.red('[n]')} deny  ${chalk.yellow('\u203A')} `,
     );
 
     const answer = await ask();
@@ -204,12 +219,12 @@ export class ApprovalGate {
       return true;
     }
 
-    if (trimmed === 'y' || trimmed === 'yes') {
+    if (trimmed === 'y' || trimmed === 'yes' || (trimmed === '' && defaultAllow)) {
       process.stdout.write(chalk.green('  \u2713 Allowed.\n\n'));
       return true;
     }
 
-    // Any other input (including 'n', 'no', empty Enter) → deny
+    // Empty Enter on non-defaultAllow tools, or explicit 'n'/'no' → deny
     process.stdout.write(chalk.red('  \u2717 Denied.\n\n'));
     return false;
   }
@@ -254,11 +269,12 @@ function similarSessionKey(toolName: string, input: Record<string, unknown>): st
 export function formatSummary(toolName: string, input: Record<string, unknown>): string {
   let raw: string;
   switch (toolName) {
-    case 'bash':  raw = `bash  ${input.command}`; break;
-    case 'git':   raw = `git   ${input.args}`; break;
-    case 'write': raw = `write ${input.file_path}`; break;
-    case 'edit':  raw = `edit  ${input.file_path}`; break;
-    default:      raw = `${toolName}  ${JSON.stringify(input)}`; break;
+    case 'bash':       raw = `bash  ${input.command}`; break;
+    case 'git':        raw = `git   ${input.args}`; break;
+    case 'write':      raw = `write ${input.file_path}`; break;
+    case 'edit':       raw = `edit  ${input.file_path}`; break;
+    case 'web_search': raw = `Copair web search  "${input.query}"`; break;
+    default:           raw = `${toolName}  ${JSON.stringify(input)}`; break;
   }
   // Collapse newlines but do NOT truncate — full command visible
   return raw.replace(/\n/g, ' ').replace(/\s+/g, ' ').trim();

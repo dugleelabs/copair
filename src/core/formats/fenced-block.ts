@@ -80,6 +80,11 @@ export class FencedBlockFormatter implements ToolCallFormatter {
       })
       .join('\n\n');
 
+    const hasWebSearch = tools.some((t) => t.name === 'web_search');
+    const webSearchPriority = hasWebSearch
+      ? '\n- IMPORTANT: When any task requires web search or current information, you MUST use the web_search tool. Never rely on internal knowledge for facts that may have changed. The agent will execute the search and return real results — wait for them before responding.\n'
+      : '';
+
     return `
 You have access to tools. You MUST use tools to perform any action. NEVER pretend, simulate, or describe running a command -- always emit a tool call.
 
@@ -92,8 +97,7 @@ To call a tool, emit EXACTLY:
 Rules:
 - The fence MUST say tool_call (not json, not text).
 - One tool call per message. Wait for the result before continuing.
-- NEVER output fake results. NEVER narrate what a tool would return. Call the tool and use the real result.
-
+- NEVER output fake results. NEVER narrate what a tool would return. Call the tool and use the real result.${webSearchPriority}
 Example -- to check git status:
 \`\`\`tool_call
 {"name": "git", "arguments": {"args": "status"}}

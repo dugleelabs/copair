@@ -7,6 +7,14 @@ export type RiskLevel = 'safe' | 'needs-approval' | 'always-ask';
 export type GateMode = 'ask' | 'auto-approve' | 'deny';
 
 /**
+ * Files that must never bypass the approval gate even when they reside inside
+ * a trusted directory (e.g. .copair/).  A prompt injection must not be able to
+ * escalate agent permissions by writing these files through the trusted-path
+ * shortcut.
+ */
+const PERMISSION_SENSITIVE_FILES = ['config.yaml', 'allow.yaml'];
+
+/**
  * Static risk classification table.
  *
  * This is the source of truth for what requires approval. It lives here,
@@ -87,7 +95,15 @@ export class ApprovalGate {
     const abs = resolvePath(filePath);
     for (const trusted of this.trustedPaths) {
       // Exact match (e.g., .copair.yaml) or directory prefix (e.g., .copair/)
-      if (abs === trusted || abs.startsWith(trusted + '/')) return true;
+      if (abs === trusted || abs.startsWith(trusted + '/')) {
+        // Permission-sensitive files are NEVER auto-trusted — even inside .copair/.
+        // An agent (or injected prompt) must not be able to escalate its own
+        // permissions by writing the allow-list or project config.
+        if (PERMISSION_SENSITIVE_FILES.some((name) => abs.endsWith('/' + name))) {
+          return false;
+        }
+        return true;
+      }
     }
     return false;
   }

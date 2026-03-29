@@ -89,6 +89,7 @@ export function createAnthropicProvider(
 
   const client = new Anthropic({
     apiKey: config.api_key,
+    timeout: config.timeout_ms ?? 120_000,
     ...(config.base_url ? { baseURL: config.base_url } : {}),
   });
 

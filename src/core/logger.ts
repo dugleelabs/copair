@@ -1,23 +1,10 @@
+import { redact } from './redactor.js';
+
 export enum LogLevel {
   ERROR = 0,
   WARN = 1,
   INFO = 2,
   DEBUG = 3,
-}
-
-const SECRET_PATTERNS = [
-  /sk-[a-zA-Z0-9_-]{20,}/g,
-  /lin_api_[a-zA-Z0-9_-]+/g,
-  /AIza[a-zA-Z0-9_-]{35}/g,
-  /Bearer\s+[a-zA-Z0-9._-]+/g,
-];
-
-function redactSecrets(text: string): string {
-  let result = text;
-  for (const pattern of SECRET_PATTERNS) {
-    result = result.replace(pattern, '[REDACTED]');
-  }
-  return result;
 }
 
 const LEVEL_LABELS: Record<LogLevel, string> = {
@@ -63,12 +50,12 @@ export class Logger {
     if (level > this.level) return;
 
     const label = LEVEL_LABELS[level];
-    let line = `[${label}][${component}] ${redactSecrets(message)}`;
+    let line = `[${label}][${component}] ${redact(message)}`;
 
     if (data !== undefined) {
       const dataStr =
         typeof data === 'string' ? data : JSON.stringify(data, null, 2);
-      line += ` ${redactSecrets(dataStr)}`;
+      line += ` ${redact(dataStr)}`;
     }
 
     process.stderr.write(line + '\n');

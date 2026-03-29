@@ -1,7 +1,8 @@
 import { existsSync, mkdirSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { homedir } from 'node:os';
-import * as readline from 'node:readline';
+import { ttyPrompt } from '../cli/tty-prompt.js';
+import { logger } from '../core/logger.js';
 
 export interface GlobalInitResult {
   skipped: boolean;   // ~/.copair/ already existed
@@ -36,19 +37,6 @@ const GLOBAL_CONFIG_TEMPLATE = `# Copair global configuration
 #   max_sessions: 50
 `;
 
-function prompt(question: string): Promise<string> {
-  const rl = readline.createInterface({
-    input: process.stdin,
-    output: process.stdout,
-  });
-  return new Promise((resolve) => {
-    rl.question(question, (answer) => {
-      rl.close();
-      resolve(answer.trim().toLowerCase());
-    });
-  });
-}
-
 export class GlobalInitManager {
   private globalDir: string;
 
@@ -66,7 +54,11 @@ export class GlobalInitManager {
       return { skipped: false, declined: true, created: false };
     }
 
-    const answer = await prompt('Set up global Copair config at ~/.copair/? (Y/n) ');
+    const answer = ttyPrompt('Set up global Copair config at ~/.copair/? (Y/n) ');
+    if (answer === null) {
+      logger.info('init', 'TTY unavailable — treating as CI mode (deny)');
+      return { skipped: false, declined: true, created: false };
+    }
     const declined = answer === 'n' || answer === 'no';
 
     if (declined) {
@@ -78,7 +70,7 @@ export class GlobalInitManager {
   }
 
   private async scaffold(): Promise<void> {
-    mkdirSync(this.globalDir, { recursive: true });
+    mkdirSync(this.globalDir, { recursive: true, mode: 0o700 });
     const configPath = join(this.globalDir, 'config.yaml');
     if (!existsSync(configPath)) {
       writeFileSync(configPath, GLOBAL_CONFIG_TEMPLATE, { mode: 0o600 });

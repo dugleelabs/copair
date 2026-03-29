@@ -61,9 +61,14 @@ function resolveModel(
   );
 }
 
-function resolveProviderConfig(config: ProviderConfig): ProviderConfig {
-  if (!config.api_key) return config;
-  return { ...config, api_key: resolveEnvVarString(config.api_key) };
+function resolveProviderConfig(config: ProviderConfig, timeoutMs?: number): ProviderConfig {
+  const resolved = config.api_key
+    ? { ...config, api_key: resolveEnvVarString(config.api_key) }
+    : { ...config };
+  if (timeoutMs !== undefined && resolved.timeout_ms === undefined) {
+    resolved.timeout_ms = timeoutMs;
+  }
+  return resolved;
 }
 
 function getProviderType(
@@ -140,7 +145,7 @@ async function main() {
   providerRegistry.register('openai-compatible', createOpenAICompatibleProvider);
 
   const providerType = getProviderType(providerName, providerConfig);
-  const provider = providerRegistry.resolve(providerType, resolveProviderConfig(providerConfig), modelAlias);
+  const provider = providerRegistry.resolve(providerType, resolveProviderConfig(providerConfig, config.network?.provider_timeout_ms), modelAlias);
 
   // Set up tools
   const toolRegistry = createDefaultToolRegistry(config);

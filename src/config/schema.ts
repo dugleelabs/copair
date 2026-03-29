@@ -16,6 +16,8 @@ export const ProviderConfigSchema = z.object({
     .enum(['anthropic', 'openai', 'google', 'openai-compatible'])
     .optional(),
   models: z.record(z.string(), ModelConfigSchema),
+  /** Provider API call timeout in ms. Populated by config loader from network.provider_timeout_ms. */
+  timeout_ms: z.number().int().positive().optional(),
 });
 
 export const PermissionsConfigSchema = z.object({
@@ -67,6 +69,20 @@ export const UIConfigSchema = z.object({
   tab_completion: z.boolean().default(true),
 });
 
+export const SecurityConfigSchema = z.object({
+  /** 'strict' denies all out-of-project paths; 'warn' allows but logs (testing only). */
+  path_validation: z.enum(['strict', 'warn']).default('strict'),
+  /** When true, also redact high-entropy base64-like strings from logs and tool output. */
+  redact_high_entropy: z.boolean().default(false),
+});
+
+export const NetworkConfigSchema = z.object({
+  /** Timeout for web search HTTP calls in milliseconds. */
+  web_search_timeout_ms: z.number().int().positive().default(15_000),
+  /** Timeout for provider API calls in milliseconds. */
+  provider_timeout_ms: z.number().int().positive().default(120_000),
+});
+
 export const CopairConfigSchema = z.object({
   version: z.number().int().positive(),
   default_model: z.string().optional(),
@@ -79,6 +95,8 @@ export const CopairConfigSchema = z.object({
   context: ContextConfigSchema.default(() => ContextConfigSchema.parse({})),
   knowledge: KnowledgeConfigSchema.default(() => KnowledgeConfigSchema.parse({})),
   ui: UIConfigSchema.default(() => UIConfigSchema.parse({})),
+  security: SecurityConfigSchema.optional(),
+  network: NetworkConfigSchema.optional(),
 });
 
 export type CopairConfig = z.infer<typeof CopairConfigSchema>;
@@ -88,3 +106,5 @@ export type IdentityConfig = z.infer<typeof IdentityConfigSchema>;
 export type ContextConfig = z.infer<typeof ContextConfigSchema>;
 export type KnowledgeConfig = z.infer<typeof KnowledgeConfigSchema>;
 export type UIConfig = z.infer<typeof UIConfigSchema>;
+export type SecurityConfig = z.infer<typeof SecurityConfigSchema>;
+export type NetworkConfig = z.infer<typeof NetworkConfigSchema>;

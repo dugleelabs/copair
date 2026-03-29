@@ -1,7 +1,14 @@
 import { execSync } from 'node:child_process';
+import { z } from 'zod';
 import type { Tool } from './interface.js';
 
+export const BashInputSchema = z.object({
+  command: z.string().min(1),
+  timeout: z.number().int().positive().optional(),
+}).strict();
+
 export const bashTool: Tool = {
+  inputSchema: BashInputSchema,
   definition: {
     name: 'bash',
     description: 'Execute a shell command',

@@ -1,6 +1,12 @@
 import { execSync } from 'node:child_process';
+import { z } from 'zod';
 import type { Tool } from './interface.js';
 import type { IdentityConfig } from '../config/schema.js';
+
+export const GitInputSchema = z.object({
+  args: z.string().min(1),
+  cwd: z.string().min(1).optional(),
+}).strict();
 
 const DEFAULT_IDENTITY: IdentityConfig = {
   name: 'Copair',
@@ -30,6 +36,7 @@ function sanitizeArgs(args: string): string {
 
 export function createGitTool(identity: IdentityConfig = DEFAULT_IDENTITY): Tool {
   return {
+    inputSchema: GitInputSchema,
     definition: {
       name: 'git',
       description: 'Execute a git command (status, diff, log, commit, etc.)',

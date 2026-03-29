@@ -1,6 +1,7 @@
 import { existsSync, mkdirSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
-import * as readline from 'node:readline';
+import { ttyPrompt } from '../cli/tty-prompt.js';
+import { logger } from '../core/logger.js';
 
 export interface ProjectInitResult {
   alreadyInitialised: boolean;
@@ -19,19 +20,6 @@ const PROJECT_CONFIG_TEMPLATE = `# Copair project configuration
 #   mode: ask
 `;
 
-function prompt(question: string): Promise<string> {
-  const rl = readline.createInterface({
-    input: process.stdin,
-    output: process.stdout,
-  });
-  return new Promise((resolve) => {
-    rl.question(question, (answer) => {
-      rl.close();
-      resolve(answer.trim().toLowerCase());
-    });
-  });
-}
-
 export class ProjectInitManager {
   async check(cwd: string, options: { ci: boolean }): Promise<ProjectInitResult> {
     const copairDir = join(cwd, '.copair');
@@ -48,7 +36,11 @@ export class ProjectInitManager {
       return { alreadyInitialised: false, declined: true, created: false };
     }
 
-    const answer = await prompt('Trust this folder and allow Copair to run here? (y/N) ');
+    const answer = ttyPrompt('Trust this folder and allow Copair to run here? (y/N) ');
+    if (answer === null) {
+      logger.info('init', 'TTY unavailable — treating as CI mode (deny)');
+      return { alreadyInitialised: false, declined: true, created: false };
+    }
     const accepted = answer === 'y' || answer === 'yes';
 
     if (!accepted) {
@@ -61,11 +53,12 @@ export class ProjectInitManager {
 
   private async scaffold(cwd: string): Promise<void> {
     const copairDir = join(cwd, '.copair');
-    mkdirSync(join(copairDir, 'commands'), { recursive: true });
+    mkdirSync(copairDir, { recursive: true, mode: 0o700 });
+    mkdirSync(join(copairDir, 'commands'), { recursive: true, mode: 0o700 });
 
     const configPath = join(copairDir, 'config.yaml');
     if (!existsSync(configPath)) {
-      writeFileSync(configPath, PROJECT_CONFIG_TEMPLATE, { mode: 0o644 });
+      writeFileSync(configPath, PROJECT_CONFIG_TEMPLATE, { mode: 0o600 });
     }
   }
 }

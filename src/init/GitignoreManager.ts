@@ -1,23 +1,11 @@
 import { existsSync, readFileSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
-import * as readline from 'node:readline';
+import { ttyPrompt } from '../cli/tty-prompt.js';
+import { logger } from '../core/logger.js';
 
 export type GitignoreCoverage = 'full' | 'partial' | 'none';
 
 const FULL_PATTERNS = ['.copair/', '.copair'];
-
-function prompt(question: string): Promise<string> {
-  const rl = readline.createInterface({
-    input: process.stdin,
-    output: process.stdout,
-  });
-  return new Promise((resolve) => {
-    rl.question(question, (answer) => {
-      rl.close();
-      resolve(answer.trim().toLowerCase());
-    });
-  });
-}
 
 export class GitignoreManager {
   /**
@@ -35,7 +23,12 @@ export class GitignoreManager {
       return;
     }
 
-    const answer = await prompt('Add .copair/ to .gitignore? (Y/n) ');
+    const answer = ttyPrompt('Add .copair/ to .gitignore? (Y/n) ');
+    if (answer === null) {
+      logger.info('init', 'TTY unavailable — treating as CI mode, applying gitignore silently');
+      await this.consolidate(cwd);
+      return;
+    }
     const declined = answer === 'n' || answer === 'no';
 
     if (!declined) {

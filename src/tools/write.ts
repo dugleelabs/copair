@@ -1,8 +1,15 @@
 import { writeFileSync, mkdirSync } from 'node:fs';
 import { dirname } from 'node:path';
+import { z } from 'zod';
 import type { Tool } from './interface.js';
 
+export const WriteInputSchema = z.object({
+  file_path: z.string().min(1),
+  content: z.string(),
+}).strict();
+
 export const writeTool: Tool = {
+  inputSchema: WriteInputSchema,
   definition: {
     name: 'write',
     description: 'Write content to a file (creates parent directories if needed)',

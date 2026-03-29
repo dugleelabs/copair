@@ -1,6 +1,7 @@
 import { existsSync, readFileSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import * as readline from 'node:readline';
+import { wrapKnowledge } from '../core/context-wrapper.js';
 
 export const KB_FILENAME = 'COPAIR_KNOWLEDGE.md';
 
@@ -69,7 +70,7 @@ export class KnowledgeManager {
   }
 
   injectIntoSystemPrompt(content: string): string {
-    return `<knowledge>\n${content.trim()}\n</knowledge>\n\n`;
+    return wrapKnowledge(content.trim(), 'user') + '\n\n';
   }
 
   checkSizeBudget(sizeBytes: number): void {

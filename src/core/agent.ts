@@ -6,6 +6,7 @@ import { ConversationManager } from './conversation.js';
 import { ContextWindowManager } from './context-window.js';
 import { Renderer, formatToolCallFromInput } from '../cli/renderer.js';
 import { logger } from './logger.js';
+import { INJECTION_PREAMBLE } from './context-wrapper.js';
 
 import type { ToolCallFormatter } from './formats/interface.js';
 import type { FormatName } from './formats/index.js';
@@ -157,7 +158,7 @@ export class Agent {
         ? 'When the user asks you to search the web, or requests current/up-to-date information, you MUST call the web_search tool. Never answer such queries from training knowledge alone — always invoke the tool and base your response on its results.'
         : undefined;
 
-      const systemPrompt = [this.options.systemPrompt, toolSystemPrompt, webSearchHint]
+      const systemPrompt = [INJECTION_PREAMBLE, this.options.systemPrompt, toolSystemPrompt, webSearchHint]
         .filter(Boolean)
         .join('\n\n') || undefined;
 

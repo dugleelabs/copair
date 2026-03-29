@@ -1,7 +1,16 @@
 import { readFileSync, writeFileSync, existsSync } from 'node:fs';
+import { z } from 'zod';
 import type { Tool } from './interface.js';
 
+export const EditInputSchema = z.object({
+  file_path: z.string().min(1),
+  old_string: z.string(),
+  new_string: z.string(),
+  replace_all: z.boolean().optional(),
+}).strict();
+
 export const editTool: Tool = {
+  inputSchema: EditInputSchema,
   definition: {
     name: 'edit',
     description: 'Replace an exact string in a file. The old_string must be unique in the file.',

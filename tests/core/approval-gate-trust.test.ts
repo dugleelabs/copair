@@ -14,10 +14,16 @@ describe('ApprovalGate — trusted paths', () => {
     expect(gate.isTrustedPath('write', { file_path: '/project/.copair/.gitignore' })).toBe(true);
   });
 
-  it('allows exact file match for trusted path', () => {
+  it('blocks config.yaml even when inside a trusted path (permission-sensitive)', () => {
     const gate = new ApprovalGate('ask');
-    gate.addTrustedPath('/project/.copair.yaml');
-    expect(gate.isTrustedPath('write', { file_path: '/project/.copair.yaml' })).toBe(true);
+    gate.addTrustedPath('/project/.copair');
+    expect(gate.isTrustedPath('write', { file_path: '/project/.copair/config.yaml' })).toBe(false);
+  });
+
+  it('blocks allow.yaml even when inside a trusted path (permission-sensitive)', () => {
+    const gate = new ApprovalGate('ask');
+    gate.addTrustedPath('/project/.copair');
+    expect(gate.isTrustedPath('write', { file_path: '/project/.copair/allow.yaml' })).toBe(false);
   });
 
   it('blocks writes outside trusted paths', () => {
@@ -68,19 +74,19 @@ describe('ApprovalGate — trusted paths', () => {
     expect(allowed).toBe(false);
   });
 
-  it('.copair.yaml exact match works in deny mode', async () => {
+  it('config.yaml is blocked in deny mode even if path is trusted (no permission escalation)', async () => {
     const gate = new ApprovalGate('deny');
-    gate.addTrustedPath('/project/.copair.yaml');
-    const allowed = await gate.allow('write', { file_path: '/project/.copair.yaml' });
-    expect(allowed).toBe(true);
+    gate.addTrustedPath('/project/.copair');
+    const allowed = await gate.allow('write', { file_path: '/project/.copair/config.yaml' });
+    expect(allowed).toBe(false);
   });
 
   it('supports multiple trusted paths', () => {
     const gate = new ApprovalGate('ask');
     gate.addTrustedPath('/project/.copair');
-    gate.addTrustedPath('/project/.copair.yaml');
+    gate.addTrustedPath('/project/COPAIR_KNOWLEDGE.md');
     expect(gate.isTrustedPath('write', { file_path: '/project/.copair/foo' })).toBe(true);
-    expect(gate.isTrustedPath('write', { file_path: '/project/.copair.yaml' })).toBe(true);
+    expect(gate.isTrustedPath('write', { file_path: '/project/COPAIR_KNOWLEDGE.md' })).toBe(true);
     expect(gate.isTrustedPath('write', { file_path: '/project/src/foo.ts' })).toBe(false);
   });
 });

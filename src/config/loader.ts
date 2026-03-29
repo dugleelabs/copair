@@ -85,8 +85,8 @@ function loadYamlFile(filePath: string): Record<string, unknown> | null {
 export function loadConfig(projectDir?: string): CopairConfig {
   const globalPath = resolve(homedir(), '.copair', 'config.yaml');
   const projectPath = projectDir
-    ? resolve(projectDir, '.copair.yaml')
-    : resolve(process.cwd(), '.copair.yaml');
+    ? resolve(projectDir, '.copair', 'config.yaml')
+    : resolve(process.cwd(), '.copair', 'config.yaml');
 
   const globalConfig = loadYamlFile(globalPath);
   const projectConfig = loadYamlFile(projectPath);
@@ -101,6 +101,12 @@ export function loadConfig(projectDir?: string): CopairConfig {
     merged = deepMerge(globalConfig, projectConfig);
   } else {
     merged = (globalConfig ?? projectConfig)!;
+  }
+
+  // Default version when absent — allows minimal project configs (e.g. only
+  // overriding default_model) to omit version without failing schema validation.
+  if (merged.version === undefined) {
+    merged = { ...merged, version: CURRENT_CONFIG_VERSION };
   }
 
   // Check version before interpolation

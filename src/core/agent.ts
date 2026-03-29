@@ -1,13 +1,15 @@
 import type { Provider, ContentBlock } from '../providers/interface.js';
+import { NATIVE_SEARCH_MARKER } from '../providers/interface.js';
 import type { ToolRegistry } from '../tools/registry.js';
 import type { ToolExecutor } from './tool-executor.js';
 import { ConversationManager } from './conversation.js';
 import { ContextWindowManager } from './context-window.js';
 import { Renderer, formatToolCallFromInput } from '../cli/renderer.js';
+import { logger } from './logger.js';
 
 import type { ToolCallFormatter } from './formats/interface.js';
 import type { FormatName } from './formats/index.js';
-import { resolveFormatter, buildTextFilter } from './formats/index.js';
+import { resolveFormatter, buildStreamingFilter, StreamingMarkupFilter } from './formats/index.js';
 import type { AgentBridge } from '../cli/ui/agent-bridge.js';
 
 export interface AgentOptions {
@@ -28,7 +30,7 @@ export class Agent {
   private options: AgentOptions;
   private _model: string;
   private formatter: ToolCallFormatter;
-  private textFilter: (text: string) => string;
+  private textFilter: StreamingMarkupFilter;
 
   constructor(
     provider: Provider,
@@ -46,7 +48,7 @@ export class Agent {
     this.renderer = new Renderer(options.bridge);
     this.options = options;
     this.formatter = resolveFormatter(provider.name, model, options.toolCallFormat);
-    this.textFilter = buildTextFilter(this.formatter);
+    this.textFilter = buildStreamingFilter(this.formatter);
   }
 
   get model(): string {
@@ -100,7 +102,7 @@ export class Agent {
     this._model = newModel;
     this.contextWindow = new ContextWindowManager(newProvider.maxContextWindow);
     this.formatter = resolveFormatter(newProvider.name, newModel, this.options.toolCallFormat);
-    this.textFilter = buildTextFilter(this.formatter);
+    this.textFilter = buildStreamingFilter(this.formatter);
   }
 
   async handleMessage(userInput: string): Promise<{
@@ -112,6 +114,10 @@ export class Agent {
 
     let totalUsage: { inputTokens: number; outputTokens: number } | null = null;
     let lastInputTokens = 0;
+    // When true, the agent web search tool failed on the previous loop iteration.
+    // On the next iteration, inject the provider's native search marker so the
+    // model can fall back to the provider's built-in search capability.
+    let agentWebSearchFailed = false;
 
     // Agent loop — keep calling provider until no more tool calls
     while (true) {
@@ -121,7 +127,20 @@ export class Agent {
       );
 
       const allTools = this.toolRegistry.getAllDefinitions();
-      const tools = this.provider.supportsToolCalling ? allTools : [];
+
+      // If the agent web search failed and the provider supports native search,
+      // replace the `web_search` tool with the sentinel that triggers native fallback.
+      let tools = this.provider.supportsToolCalling ? allTools : [];
+      if (agentWebSearchFailed && this.provider.supportsNativeSearch) {
+        logger.info('web_search', 'Falling back to provider native search (agent search unavailable)');
+        tools = tools.map((t) =>
+          t.name === 'web_search'
+            ? { name: NATIVE_SEARCH_MARKER, description: t.description, inputSchema: t.inputSchema }
+            : t,
+        );
+        // Reset flag — the fallback is a one-shot attempt per failed search
+        agentWebSearchFailed = false;
+      }
 
       // For non-tool-calling models, inject tool descriptions into the system prompt
       // using the resolved formatter for the current model
@@ -129,9 +148,18 @@ export class Agent {
         !this.provider.supportsToolCalling && allTools.length > 0
           ? this.formatter.buildSystemPrompt(allTools)
           : undefined;
-      const systemPrompt = toolSystemPrompt
-        ? [this.options.systemPrompt, toolSystemPrompt].filter(Boolean).join('\n\n')
-        : this.options.systemPrompt;
+
+      // For ALL providers: when the agent has web_search configured, tell the
+      // model to call it instead of answering from training knowledge.
+      // Native tool-calling models (e.g. Claude) receive no formatter prompt, so
+      // without this hint they freely answer from training data.
+      const webSearchHint = allTools.some((t) => t.name === 'web_search')
+        ? 'When the user asks you to search the web, or requests current/up-to-date information, you MUST call the web_search tool. Never answer such queries from training knowledge alone — always invoke the tool and base your response on its results.'
+        : undefined;
+
+      const systemPrompt = [this.options.systemPrompt, toolSystemPrompt, webSearchHint]
+        .filter(Boolean)
+        .join('\n\n') || undefined;
 
       const stream = this.provider.chat(messages, tools, {
         model: this._model,
@@ -151,19 +179,26 @@ export class Agent {
       // text content even when using the OpenAI-compatible tool calling API.
       // We check for leaked tool calls in text whenever text is present,
       // merging them with any native tool calls from the same response.
-      let toolCalls = nativeToolCalls;
+      // Strip native search markers — they are display-only; the provider already
+      // handled the search server-side within this same streaming response.
+      // The model's answer (incorporating search results) is in fullText.
+      const nonNativeToolCalls = nativeToolCalls.filter(
+        (tc) => tc.name !== NATIVE_SEARCH_MARKER,
+      );
+
+      let toolCalls = nonNativeToolCalls;
       let cleanedText = fullText;
       if (fullText) {
         const parsed = this.formatter.parse(fullText);
         if (parsed.toolCalls.length > 0) {
           // Deduplicate: skip parsed calls whose name+arguments match a native call
           const nativeKeys = new Set(
-            nativeToolCalls.map((tc) => `${tc.name}:${tc.arguments}`),
+            nonNativeToolCalls.map((tc) => `${tc.name}:${tc.arguments}`),
           );
           const uniqueParsed = parsed.toolCalls.filter(
             (tc) => !nativeKeys.has(`${tc.name}:${tc.arguments}`),
           );
-          toolCalls = [...nativeToolCalls, ...uniqueParsed];
+          toolCalls = [...nonNativeToolCalls, ...uniqueParsed];
           cleanedText = parsed.remainingText;
         }
       }
@@ -273,6 +308,17 @@ export class Agent {
               this.renderer.showGitDiff(result.content);
             }
           }
+        }
+
+        // Track agent web search failures for native fallback on next loop iteration
+        if (tc.name === 'web_search' && result.isError) {
+          if (this.provider.supportsNativeSearch) {
+            agentWebSearchFailed = true;
+            logger.info('web_search', 'Agent web search failed — will fall back to provider native search on next turn');
+          }
+        } else if (tc.name === 'web_search' && !result.isError) {
+          // Success — clear any previous failure flag
+          agentWebSearchFailed = false;
         }
 
         toolResults.push({

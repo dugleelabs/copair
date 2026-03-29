@@ -3,6 +3,7 @@ import { Spinner } from './spinner.js';
 import { MarkdownWriter } from './markdown.js';
 import type { StreamChunk } from '../providers/interface.js';
 import type { AgentBridge } from './ui/agent-bridge.js';
+import type { StreamingMarkupFilter } from '../core/formats/index.js';
 
 /**
  * Build a human-readable one-liner for a tool call, e.g.:
@@ -35,6 +36,12 @@ export function formatToolCall(name: string, argsJson: string): string {
         break;
       case 'grep':
         raw = `grep: ${args.pattern ?? ''}`;
+        break;
+      case 'web_search':
+        raw = `copair search: "${args.query ?? ''}"`;
+        break;
+      case '_native_web_search':
+        raw = `provider search: "${args.query ?? ''}"`;
         break;
       default:
         raw = name;
@@ -77,7 +84,7 @@ export class Renderer {
 
   async render(
     stream: AsyncIterableIterator<StreamChunk>,
-    textFilter?: (text: string) => string,
+    textFilter?: StreamingMarkupFilter,
   ): Promise<{
     toolCalls: Array<{ id: string; name: string; arguments: string; metadata?: Record<string, unknown> }>;
     usage: { inputTokens: number; outputTokens: number } | null;
@@ -109,7 +116,7 @@ export class Renderer {
             this.endToolIndicator();
           }
           const raw = chunk.text ?? '';
-          const display = textFilter ? textFilter(raw) : raw;
+          const display = textFilter ? textFilter.write(raw) : raw;
           if (display && this.mdWriter) this.mdWriter.write(display);
           fullText += raw; // raw kept for parser
 
@@ -189,6 +196,13 @@ export class Renderer {
           if (this.currentToolName) this.endToolIndicator();
           break;
       }
+    }
+
+    // Flush any text the filter was holding back (partial open-tag at end of stream)
+    if (textFilter) {
+      const trailing = textFilter.flush();
+      if (trailing && this.mdWriter) this.mdWriter.write(trailing);
+      if (trailing) this.bridge?.emit('stream-text', trailing);
     }
 
     // Flush any remaining markdown buffer and add trailing newline

@@ -8,9 +8,10 @@ import type {
 } from './interface.js';
 import type { ProviderConfig } from '../config/schema.js';
 
-function toOpenAIMessages(
+export function toOpenAIMessages(
   messages: Message[],
   systemPrompt?: string,
+  supportsToolCalling = true,
 ): OpenAI.Chat.ChatCompletionMessageParam[] {
   const result: OpenAI.Chat.ChatCompletionMessageParam[] = [];
 
@@ -31,6 +32,25 @@ function toOpenAIMessages(
     }
 
     if (msg.role === 'user') {
+      if (!supportsToolCalling) {
+        // For text-based tool-calling models, render tool results as plain user
+        // text so the model can read them.  Sending them as `role: "tool"` uses
+        // native API format that these models were never trained on.
+        const parts: string[] = [];
+        for (const b of msg.content) {
+          if (b.type === 'tool_result') {
+            const label = b.isError ? 'Tool error' : 'Tool result';
+            parts.push(`[${label}: ${b.toolUseId}]\n${b.content ?? ''}`);
+          } else if (b.type === 'text' && b.text) {
+            parts.push(b.text);
+          }
+        }
+        if (parts.length > 0) {
+          result.push({ role: 'user', content: parts.join('\n\n') });
+        }
+        continue;
+      }
+
       const textParts = msg.content.filter((b) => b.type === 'text');
       const toolResults = msg.content.filter((b) => b.type === 'tool_result');
 
@@ -56,6 +76,17 @@ function toOpenAIMessages(
         .filter((b) => b.type === 'text')
         .map((b) => b.text)
         .join('');
+
+      if (!supportsToolCalling) {
+        // For text-based models, reconstruct the tool call in the XML format
+        // the model expects to see in its own prior turns.
+        const toolCallTexts = msg.content
+          .filter((b) => b.type === 'tool_use')
+          .map((b) => `<tool_call>\n${JSON.stringify({ name: b.name, arguments: b.input })}\n</tool_call>`);
+        const combined = [text, ...toolCallTexts].filter(Boolean).join('\n');
+        result.push({ role: 'assistant', content: combined || null });
+        continue;
+      }
 
       const toolCalls = msg.content
         .filter((b) => b.type === 'tool_use')
@@ -122,7 +153,7 @@ export function createOpenAIProvider(
       tools: ToolDefinition[],
       options: ProviderOptions,
     ): AsyncIterableIterator<StreamChunk> {
-      const openaiMessages = toOpenAIMessages(messages, options.systemPrompt);
+      const openaiMessages = toOpenAIMessages(messages, options.systemPrompt, supportsToolCalling);
       const openaiTools = supportsToolCalling
         ? toOpenAITools(tools)
         : undefined;

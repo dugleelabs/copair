@@ -1,5 +1,6 @@
 import type { Tool, ToolResult } from './interface.js';
 import type { CopairConfig } from '../config/schema.js';
+import { logger } from '../core/logger.js';
 
 interface SearchResult {
   title: string;
@@ -77,6 +78,12 @@ async function searchSearxng(
 
   const response = await fetch(url.toString());
   if (!response.ok) {
+    if (response.status === 403) {
+      throw new Error(
+        `SearXNG returned 403 Forbidden. The JSON format is likely disabled on this instance. ` +
+        `Enable it in settings.yml under search.formats by adding "json" to the list.`,
+      );
+    }
     throw new Error(`SearXNG error: ${response.status} ${response.statusText}`);
   }
 
@@ -112,12 +119,14 @@ export function createWebSearchTool(config: CopairConfig): Tool | null {
         required: ['query'],
       },
     },
-    requiresPermission: false,
+    requiresPermission: true,
     async execute(input: Record<string, unknown>): Promise<ToolResult> {
       const query = String(input['query'] ?? '');
       if (!query) {
         return { content: 'Error: query is required', isError: true };
       }
+
+      logger.info('web_search', `Agent web search via ${webSearchConfig.provider}: "${query}"`);
 
       try {
         let results: SearchResult[];

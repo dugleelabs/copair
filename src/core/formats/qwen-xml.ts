@@ -13,6 +13,9 @@ const MARKUP_PATTERN = /<tool_call>[\s\S]*?(?:<\/tool_call>|$)/g;
 export class QwenXmlFormatter implements ToolCallFormatter {
   readonly name = 'qwen-xml';
   readonly markupPattern = MARKUP_PATTERN;
+  readonly openTag = '<tool_call>';
+  readonly closeTag = '</tool_call>';
+  readonly suppressAfterMatch = true;
 
   parse(text: string): { toolCalls: ParsedToolCall[]; remainingText: string } {
     const toolCalls: ParsedToolCall[] = [];
@@ -44,6 +47,11 @@ export class QwenXmlFormatter implements ToolCallFormatter {
       })
       .join('\n\n');
 
+    const hasWebSearch = tools.some((t) => t.name === 'web_search');
+    const webSearchPriority = hasWebSearch
+      ? '\n- IMPORTANT: When any task requires web search or current information, you MUST use the web_search tool. Never rely on internal knowledge for facts that may have changed. The agent will execute the search and return real results — wait for them before responding.\n'
+      : '';
+
     return `
 You have access to tools. You MUST use tools to perform any action. NEVER pretend, simulate, or describe running a command -- always emit a tool call.
 
@@ -56,7 +64,7 @@ To call a tool, emit EXACTLY:
 Rules:
 - One tool call per message. Wait for the result before continuing.
 - NEVER output fake results. NEVER narrate what a tool would return. Call the tool and use the real result.
-
+- NEVER continue talking after emitting a tool call. Stop immediately after </tool_call> and wait for the result.${webSearchPriority}
 Example -- to check git status:
 <tool_call>
 {"name": "git", "arguments": {"args": "status"}}

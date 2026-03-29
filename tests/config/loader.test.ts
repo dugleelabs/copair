@@ -61,8 +61,9 @@ providers:
 `,
     );
 
+    mkdirSync(join(projectDir, '.copair'), { recursive: true });
     writeFileSync(
-      join(projectDir, '.copair.yaml'),
+      join(projectDir, '.copair', 'config.yaml'),
       `version: 1
 default_model: claude-sonnet
 providers:

@@ -13,13 +13,24 @@ import { join } from 'node:path';
 const __dirname = dirname(fileURLToPath(import.meta.url));
 const BIN = resolve(__dirname, '../../dist/index.js');
 
-function run(args: string[], opts: { env?: NodeJS.ProcessEnv; input?: string } = {}) {
+function run(args: string[], opts: { env?: NodeJS.ProcessEnv; input?: string; cwd?: string } = {}) {
   return spawnSync('node', [BIN, ...args], {
     encoding: 'utf8',
     timeout: 10_000,
     input: opts.input,
+    cwd: opts.cwd,
     env: { ...process.env, ...opts.env },
   });
+}
+
+/**
+ * Create a temp directory that looks like an initialised copair project
+ * (.copair/ present) so ProjectInitManager skips the trust prompt.
+ */
+function makeTempProject(): string {
+  const dir = mkdtempSync(join(tmpdir(), 'copair-project-'));
+  mkdirSync(join(dir, '.copair'), { recursive: true });
+  return dir;
 }
 
 describe('--version flag', () => {
@@ -43,12 +54,13 @@ describe('--help flag', () => {
 
 describe('missing config', () => {
   it('exits with an error when no config file exists and no default model is set', () => {
-    // Point HOME to a temp dir with no copair config
-    const tmpHome = mkdtempSync(join(tmpdir(), 'copair-e2e-'));
+    const tmpHome = mkdtempSync(join(tmpdir(), 'copair-e2e-home-'));
+    const tmpProject = makeTempProject();
     try {
       // Write a minimal config so it doesn't fail on providers, but leave default_model unset
       // Actually, just use a completely empty home so loadConfig returns defaults
       const { status, stderr } = run(['--model', 'nonexistent-model-xyz'], {
+        cwd: tmpProject,
         env: {
           HOME: tmpHome,
           XDG_CONFIG_HOME: join(tmpHome, '.config'),
@@ -59,13 +71,15 @@ describe('missing config', () => {
       expect(stderr).toMatch(/model|config|not found/i);
     } finally {
       rmSync(tmpHome, { recursive: true, force: true });
+      rmSync(tmpProject, { recursive: true, force: true });
     }
   });
 });
 
 describe('config with openai-compatible provider (no live API)', () => {
   it('exits with a clear error when provider URL is unreachable', () => {
-    const tmpHome = mkdtempSync(join(tmpdir(), 'copair-e2e-'));
+    const tmpHome = mkdtempSync(join(tmpdir(), 'copair-e2e-home-'));
+    const tmpProject = makeTempProject();
     try {
       const configDir = join(tmpHome, '.copair');
       mkdirSync(configDir, { recursive: true });
@@ -91,6 +105,7 @@ describe('config with openai-compatible provider (no live API)', () => {
 
       // Pipe a single message then EOF so copair tries to call the (unreachable) server
       const { status, stderr } = run([], {
+        cwd: tmpProject,
         env: { HOME: tmpHome },
         input: 'hello\n',
       });
@@ -101,6 +116,7 @@ describe('config with openai-compatible provider (no live API)', () => {
       expect(stderr + '').toMatch(/connect|fetch|ECONNREFUSED|network|error/i);
     } finally {
       rmSync(tmpHome, { recursive: true, force: true });
+      rmSync(tmpProject, { recursive: true, force: true });
     }
   });
 });

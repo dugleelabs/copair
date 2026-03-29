@@ -103,6 +103,12 @@ export function loadConfig(projectDir?: string): CopairConfig {
     merged = (globalConfig ?? projectConfig)!;
   }
 
+  // Default version when absent — allows minimal project configs (e.g. only
+  // overriding default_model) to omit version without failing schema validation.
+  if (merged.version === undefined) {
+    merged = { ...merged, version: CURRENT_CONFIG_VERSION };
+  }
+
   // Check version before interpolation
   const version = merged.version;
   if (typeof version === 'number' && version > CURRENT_CONFIG_VERSION) {

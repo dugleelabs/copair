@@ -71,7 +71,7 @@ describe('Startup sequence — integration', () => {
     expect(result.content).toBe(kbContent);
 
     const injected = km.injectIntoSystemPrompt(result.content!);
-    expect(injected).toContain('<knowledge>');
+    expect(injected).toContain('<knowledge source="user">');
     expect(injected).toContain('Directory Map');
     expect(injected).toContain('</knowledge>');
   });

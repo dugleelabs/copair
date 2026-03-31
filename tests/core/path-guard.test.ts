@@ -1,9 +1,9 @@
 import { describe, it, expect, beforeEach, afterEach } from 'vitest';
 import { mkdirSync, mkdtempSync, writeFileSync, symlinkSync, rmSync, existsSync, realpathSync } from 'node:fs';
 import { join, resolve } from 'node:path';
-import { tmpdir } from 'node:os';
+import { tmpdir, homedir } from 'node:os';
 import { execSync } from 'node:child_process';
-import { PathGuard } from '../../src/core/path-guard.js';
+import { PathGuard, BUILTIN_DENY, expandHome } from '../../src/core/path-guard.js';
 
 /**
  * Creates a temp dir with a .git/ folder so git rev-parse sees it as a repo root.
@@ -144,5 +144,164 @@ describe('PathGuard', () => {
     } finally {
       rmSync(nonGitDir, { recursive: true, force: true });
     }
+  });
+});
+
+// ── expandHome ──────────────────────────────────────────────────────────────
+
+describe('expandHome', () => {
+  it('expands ~/path to homedir/path', () => {
+    expect(expandHome('~/.ssh/id_rsa')).toBe(join(homedir(), '.ssh/id_rsa'));
+  });
+
+  it('expands bare ~ to homedir', () => {
+    expect(expandHome('~')).toBe(homedir());
+  });
+
+  it('leaves non-home paths unchanged', () => {
+    expect(expandHome('/etc/hosts')).toBe('/etc/hosts');
+    expect(expandHome('**/.env')).toBe('**/.env');
+  });
+});
+
+// ── BUILTIN_DENY ────────────────────────────────────────────────────────────
+
+describe('BUILTIN_DENY', () => {
+  it('contains at least the expected credential paths', () => {
+    const patterns = BUILTIN_DENY;
+    expect(patterns.some(p => p.includes('.ssh'))).toBe(true);
+    expect(patterns.some(p => p.includes('.aws'))).toBe(true);
+    expect(patterns.some(p => p.includes('.env'))).toBe(true);
+    expect(patterns.some(p => p.includes('.gnupg'))).toBe(true);
+  });
+});
+
+// ── PathPolicy — P1 features ────────────────────────────────────────────────
+
+describe('PathGuard with PathPolicy', () => {
+  let projectRoot: string;
+  let outsideDir: string;
+
+  beforeEach(() => {
+    projectRoot = mkdtempSync(join(tmpdir(), 'copair-pathguard-policy-'));
+    execSync('git init -q', { cwd: projectRoot });
+    outsideDir = mkdtempSync(join(tmpdir(), 'copair-outside-'));
+  });
+
+  afterEach(() => {
+    rmSync(projectRoot, { recursive: true, force: true });
+    rmSync(outsideDir, { recursive: true, force: true });
+  });
+
+  it('deny list blocks ~/.ssh/id_rsa (write path, home exists)', () => {
+    const sshKey = join(homedir(), '.ssh', 'id_rsa');
+    const guard = new PathGuard(projectRoot, 'strict');
+    // Use mustExist: false so we test the deny list without needing the file
+    // to exist. We need the parent dir to exist though.
+    const sshDir = join(homedir(), '.ssh');
+    if (!existsSync(sshDir)) {
+      // Skip on CI where ~/.ssh doesn't exist
+      return;
+    }
+    const result = guard.check(sshKey, false);
+    expect(result.allowed).toBe(false);
+    if (!result.allowed) {
+      expect(result.reason).toBe('access-denied');
+    }
+  });
+
+  it('deny list blocks ~/.aws/credentials (write path, home exists)', () => {
+    const awsDir = join(homedir(), '.aws');
+    if (!existsSync(awsDir)) {
+      mkdirSync(awsDir, { recursive: true });
+    }
+    const guard = new PathGuard(projectRoot, 'strict');
+    const result = guard.check(join(awsDir, 'credentials'), false);
+    expect(result.allowed).toBe(false);
+    if (!result.allowed) {
+      expect(result.reason).toBe('access-denied');
+    }
+  });
+
+  it('allow_paths permits a configured path outside project root', () => {
+    const allowedFile = join(outsideDir, 'shared.ts');
+    writeFileSync(allowedFile, '');
+    // Use realpathSync so the pattern matches the resolved path on macOS
+    // where /var/folders → /private/var/folders via symlink.
+    const realOutsideDir = realpathSync(outsideDir);
+
+    const guard = new PathGuard(projectRoot, 'strict', {
+      allowPaths: [realOutsideDir + '/**'],
+      denyPaths: [],
+    });
+
+    const result = guard.check(allowedFile, true);
+    expect(result.allowed).toBe(true);
+  });
+
+  it('deny_paths override replaces built-in deny list', () => {
+    // With a custom denyPaths, BUILTIN_DENY is replaced entirely.
+    // So ~/.aws/credentials is no longer blocked, but the custom pattern is.
+    const targetFile = join(outsideDir, 'blocked.txt');
+    writeFileSync(targetFile, '');
+    const realOutsideDir = realpathSync(outsideDir);
+
+    const guard = new PathGuard(projectRoot, 'strict', {
+      allowPaths: [],
+      denyPaths: [realOutsideDir + '/**'],
+    });
+
+    const result = guard.check(targetFile, true);
+    expect(result.allowed).toBe(false);
+    if (!result.allowed) {
+      expect(result.reason).toBe('access-denied');
+    }
+  });
+
+  it('deny_paths override takes precedence over allow_paths', () => {
+    const targetFile = join(outsideDir, 'secret.txt');
+    writeFileSync(targetFile, '');
+    const realOutsideDir = realpathSync(outsideDir);
+
+    // Both deny and allow match the path — deny wins.
+    const guard = new PathGuard(projectRoot, 'strict', {
+      allowPaths: [realOutsideDir + '/**'],
+      denyPaths: [realOutsideDir + '/**'],
+    });
+
+    const result = guard.check(targetFile, true);
+    expect(result.allowed).toBe(false);
+  });
+
+  it('.env outside project root is denied by built-in deny list', () => {
+    const envFile = join(outsideDir, '.env');
+    writeFileSync(envFile, '');
+
+    const guard = new PathGuard(projectRoot, 'strict');
+    const result = guard.check(envFile, true);
+    expect(result.allowed).toBe(false);
+  });
+
+  it('.env inside project root passes boundary check (not in deny list for project paths)', () => {
+    const envFile = join(projectRoot, '.env');
+    writeFileSync(envFile, '');
+
+    const guard = new PathGuard(projectRoot, 'strict');
+    const result = guard.check(envFile, true);
+    // Inside project root — deny list is not evaluated; returns allowed (approval gate decides)
+    expect(result.allowed).toBe(true);
+  });
+
+  it('unconfigured path outside project root is denied even with allow_paths set', () => {
+    const unlistedFile = join(outsideDir, 'unlisted.ts');
+    writeFileSync(unlistedFile, '');
+
+    const guard = new PathGuard(projectRoot, 'strict', {
+      allowPaths: [realpathSync(projectRoot) + '/some/other/dir/**'],
+      denyPaths: [],
+    });
+
+    const result = guard.check(unlistedFile, true);
+    expect(result.allowed).toBe(false);
   });
 });

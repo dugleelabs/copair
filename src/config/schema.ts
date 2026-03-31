@@ -23,6 +23,13 @@ export const ProviderConfigSchema = z.object({
 export const PermissionsConfigSchema = z.object({
   mode: z.enum(['ask', 'auto-approve', 'deny']).default('ask'),
   allow_commands: z.array(z.string()).default([]),
+  /** Glob patterns of paths outside the project root the agent may request access to. */
+  allow_paths: z.array(z.string()).default([]),
+  /**
+   * Glob patterns unconditionally denied regardless of approval mode. When non-empty,
+   * replaces the built-in deny list entirely. Leave empty to use built-in defaults.
+   */
+  deny_paths: z.array(z.string()).default([]),
 });
 
 export const FeatureFlagsSchema = z.object({

@@ -12,7 +12,7 @@
  * writing so that raw secrets never appear in the audit log.
  */
 
-import { appendFile } from 'node:fs/promises';
+import { appendFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { redact } from './redactor.js';
 
@@ -65,7 +65,7 @@ export class AuditLog {
       Object.entries(entry).filter(([, v]) => v !== undefined),
     );
 
-    await appendFile(this.logPath, JSON.stringify(clean) + '\n', { mode: 0o600 });
+    appendFileSync(this.logPath, JSON.stringify(clean) + '\n', { mode: 0o600 });
   }
 
   getLogPath(): string {

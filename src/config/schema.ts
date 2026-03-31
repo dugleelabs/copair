@@ -43,6 +43,11 @@ export const McpServerConfigSchema = z.object({
   env: z.record(z.string(), z.string()).optional(),
   /** Per-server tool call timeout in ms. Overrides the global default of 30s. */
   timeout_ms: z.number().int().positive().optional(),
+  /**
+   * When true, inherit the full process.env rather than the minimal safe set.
+   * Default: false (principle of least privilege — FR-13).
+   */
+  inherit_env: z.boolean().optional(),
 });
 
 export const WebSearchConfigSchema = z.object({

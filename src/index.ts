@@ -302,6 +302,7 @@ async function main() {
   const auditLog = new AuditLog(sessionManager.getSessionDir());
   executor.setAuditLog(auditLog);
   gate.setAuditLog(auditLog);
+  mcpManager.setAuditLog(auditLog);
   await auditLog.append({ event: 'session_start', outcome: 'allowed', detail: modelAlias });
 
   let identifierDerived = sessionResumed;

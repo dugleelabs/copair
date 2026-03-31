@@ -40,6 +40,7 @@ import { KnowledgeSetupFlow } from './knowledge/KnowledgeSetupFlow.js';
 import { isCI } from './utils/environmentUtils.js';
 import { logger, LogLevel } from './core/logger.js';
 import { AuditLog } from './core/audit-log.js';
+import { runAuditCommand } from './cli/commands/audit.js';
 
 function resolveModel(
   config: CopairConfig,
@@ -507,7 +508,15 @@ async function main() {
   await appHandle.waitForExit().then(doExit);
 }
 
-main().catch((err) => {
-  console.error(`Error: ${(err as Error).message}`);
-  process.exit(1);
-});
+// ── Subcommand dispatch (before main REPL) ────────────────────────────────────
+if (process.argv[2] === 'audit') {
+  runAuditCommand(process.argv.slice(3)).catch((err) => {
+    process.stderr.write(`audit: ${(err as Error).message}\n`);
+    process.exit(1);
+  });
+} else {
+  main().catch((err) => {
+    console.error(`Error: ${(err as Error).message}`);
+    process.exit(1);
+  });
+}

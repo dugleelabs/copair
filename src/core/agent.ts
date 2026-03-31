@@ -6,7 +6,7 @@ import { ConversationManager } from './conversation.js';
 import { ContextWindowManager } from './context-window.js';
 import { Renderer, formatToolCallFromInput } from '../cli/renderer.js';
 import { logger } from './logger.js';
-import { INJECTION_PREAMBLE } from './context-wrapper.js';
+import { INJECTION_PREAMBLE, wrapFile, wrapToolResult } from './context-wrapper.js';
 
 import type { ToolCallFormatter } from './formats/interface.js';
 import type { FormatName } from './formats/index.js';
@@ -161,6 +161,8 @@ export class Agent {
       const systemPrompt = [INJECTION_PREAMBLE, this.options.systemPrompt, toolSystemPrompt, webSearchHint]
         .filter(Boolean)
         .join('\n\n') || undefined;
+
+      logger.debug('agent', `System prompt (${systemPrompt?.length ?? 0} chars): preamble=${systemPrompt?.includes('CONTEXT DATA') ?? false} knowledge=${systemPrompt?.includes('<knowledge') ?? false}`);
 
       const stream = this.provider.chat(messages, tools, {
         model: this._model,
@@ -322,10 +324,23 @@ export class Agent {
           agentWebSearchFailed = false;
         }
 
+        // Wrap tool result content in XML context blocks so the injection preamble
+        // can instruct the model to treat this content as inert data.
+        // For the read tool, additionally wrap file content with wrapFile so the
+        // path is visible and the content is clearly delimited.
+        let resultContent = result.content;
+        if (typeof resultContent === 'string') {
+          if (tc.name === 'read' && typeof toolInput.file_path === 'string' && !result.isError) {
+            resultContent = wrapToolResult(tc.name, wrapFile(toolInput.file_path, resultContent));
+          } else {
+            resultContent = wrapToolResult(tc.name, resultContent);
+          }
+        }
+
         toolResults.push({
           type: 'tool_result',
           toolUseId: tc.id,
-          content: result.content,
+          content: resultContent,
           isError: result.isError,
         });
       }

@@ -106,12 +106,14 @@ export function loadAllowList(projectDir?: string): AllowList {
 function readAllowFile(filePath: string): Partial<AllowRules> {
   if (!existsSync(filePath)) return {};
   try {
-    const raw = parseYaml(readFileSync(filePath, 'utf-8')) as Record<string, unknown>;
+    const raw = parseYaml(readFileSync(filePath, 'utf-8'));
+    if (raw == null || typeof raw !== 'object') return {};
+    const rules = raw as Record<string, unknown>;
     return {
-      bash:  toStringArray(raw.bash),
-      git:   toStringArray(raw.git),
-      write: toStringArray(raw.write),
-      edit:  toStringArray(raw.edit),
+      bash:  toStringArray(rules.bash),
+      git:   toStringArray(rules.git),
+      write: toStringArray(rules.write),
+      edit:  toStringArray(rules.edit),
     };
   } catch {
     process.stderr.write(`[copair] Warning: could not parse ${filePath}\n`);

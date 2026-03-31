@@ -17,6 +17,7 @@ import { join } from 'node:path';
 import { tmpdir } from 'node:os';
 import { execSync } from 'node:child_process';
 
+import * as ttyPromptModule from '../../src/cli/tty-prompt.js';
 import { KnowledgeManager } from '../../src/knowledge/KnowledgeManager.js';
 import { INJECTION_PREAMBLE } from '../../src/core/context-wrapper.js';
 import { PathGuard } from '../../src/core/path-guard.js';
@@ -196,32 +197,29 @@ describe('Security — attack-path integration (T-21)', () => {
 
   describe('approval gate /dev/tty isolation', () => {
     it('approval gate denies when TTY is unavailable (CI mode — cannot be bypassed via stdin)', async () => {
-      // In the test environment, /dev/tty is unavailable. The legacyPrompt reads from
-      // /dev/tty (not stdin), so piping 'y\n' to stdin has no effect. readFromTty()
-      // returns null → CI mode deny.
+      // Simulate CI mode: /dev/tty unavailable → readFromTty returns null → gate denies.
+      // Without this mock the test hangs in interactive terminals waiting for real input.
+      const ttyMock = vi.spyOn(ttyPromptModule, 'readFromTty').mockReturnValue(null);
+
       const gate = new ApprovalGate('ask'); // requires approval for write
       const guard = new PathGuard(projectRoot);
 
-      // Write a file inside the project root so PathGuard passes (if gate passes)
       writeFileSync(join(projectRoot, 'target.ts'), '');
       mkdirSync(join(projectRoot, 'src'), { recursive: true });
 
       const tool = makeFakeTool('write', { content: 'written', isError: false });
       const executor = new ToolExecutor(makeRegistry(tool), gate, guard);
 
-      // write is 'needs-approval' — gate prompts via /dev/tty.
-      // In CI (/dev/tty unavailable), readFromTty returns null → gate returns false.
       const result = await executor.execute('write', {
         file_path: join(projectRoot, 'target.ts'),
         content: 'content',
       });
 
-      // Either denied (no TTY) or the write succeeded (if test runs in interactive terminal)
-      // The key invariant: stdin piping cannot approve the gate — only /dev/tty can.
-      // We verify the gate behavior: if denied, the tool was NOT called.
-      if (result.denied) {
-        expect(tool.execute).not.toHaveBeenCalled();
-      }
+      // readFromTty returned null → gate must deny (CI-mode deny policy)
+      expect(result.denied).toBe(true);
+      expect(tool.execute).not.toHaveBeenCalled();
+
+      ttyMock.mockRestore();
     });
 
     it('gate in deny mode never calls tool regardless of TTY state', async () => {

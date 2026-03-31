@@ -26,6 +26,8 @@ export class McpClientManager {
   private clients = new Map<string, Client>();
   /** Servers that have timed out — subsequent calls fail immediately. */
   private degraded = new Set<string>();
+  /** Per-server timeout override in ms. Falls back to 30s if not set. */
+  private timeouts = new Map<string, number>();
 
   async initialize(servers: McpServerConfig[]): Promise<void> {
     for (const server of servers) {
@@ -34,6 +36,9 @@ export class McpClientManager {
   }
 
   private async connectServer(server: McpServerConfig): Promise<void> {
+    if (server.timeout_ms !== undefined) {
+      this.timeouts.set(server.name, server.timeout_ms);
+    }
     const transport = new StdioClientTransport({
       command: server.command,
       args: server.args,
@@ -63,8 +68,9 @@ export class McpClientManager {
     serverName: string,
     toolName: string,
     args: Record<string, unknown>,
-    timeoutMs = 30_000,
+    timeoutMs?: number,
   ): Promise<{ content: Array<{ type: string; text?: string }>; isError?: boolean }> {
+    const resolvedTimeout = timeoutMs ?? this.timeouts.get(serverName) ?? 30_000;
     if (this.degraded.has(serverName)) {
       throw new McpTimeoutError(
         `MCP server "${serverName}" is degraded (previous timeout) — skipping`,
@@ -76,7 +82,7 @@ export class McpClientManager {
       throw new Error(`MCP server "${serverName}" not connected`);
     }
 
-    const timeoutSignal = AbortSignal.timeout(timeoutMs);
+    const timeoutSignal = AbortSignal.timeout(resolvedTimeout);
 
     try {
       const result = await client.callTool(
@@ -89,7 +95,7 @@ export class McpClientManager {
       if (err instanceof Error && err.name === 'TimeoutError') {
         this.degraded.add(serverName);
         logger.warn('mcp', `Timeout on tool "${toolName}" from server "${serverName}" — server marked degraded`);
-        throw new McpTimeoutError(`MCP tool "${toolName}" timed out after ${timeoutMs}ms`);
+        throw new McpTimeoutError(`MCP tool "${toolName}" timed out after ${resolvedTimeout}ms`);
       }
       throw err;
     }
@@ -110,5 +116,6 @@ export class McpClientManager {
     await Promise.all(shutdowns);
     this.clients.clear();
     this.degraded.clear();
+    this.timeouts.clear();
   }
 }

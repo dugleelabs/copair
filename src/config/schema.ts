@@ -34,6 +34,8 @@ export const McpServerConfigSchema = z.object({
   command: z.string(),
   args: z.array(z.string()).default([]),
   env: z.record(z.string(), z.string()).optional(),
+  /** Per-server tool call timeout in ms. Overrides the global default of 30s. */
+  timeout_ms: z.number().int().positive().optional(),
 });
 
 export const WebSearchConfigSchema = z.object({

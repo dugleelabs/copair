@@ -10,7 +10,7 @@ All notable changes to copair are documented here.
 
 - **Zod tool input validation (FR-02)** — All built-in tools now declare a Zod schema (`inputSchema`). `ToolExecutor` validates every tool call against its schema before anything else runs — before the approval gate, before path checks. Invalid input returns a structured error immediately; the tool is never executed. MCP tools (dynamically discovered) skip validation (passthrough), as their schemas are not statically known.
 
-- **Repository boundary enforcement / path traversal defense (FR-03)** — A new `PathGuard` class is the single enforcer of the project boundary. It is instantiated once at session start (with the git root or cwd as the project root) and injected into `ToolExecutor`. All file-touching tool calls pass their path fields through `PathGuard.check()` before execution. `realpathSync` is used to resolve symlinks, preventing symlink escape attacks. Paths outside the project root are denied in `strict` mode (default). The agent receives only a generic "Access denied" error — no path details are leaked.
+- **Repository boundary enforcement / path traversal defense (FR-03)** — A new `PathGuard` class is the single enforcer of the project boundary. It is instantiated once at session start (with the git root or cwd as the project root) and injected into `ToolExecutor`. All file-touching tool calls (`read`, `write`, `edit`, `glob`, `grep`) pass their path fields through `PathGuard.check()` before execution. `realpathSync` is used to resolve symlinks, preventing symlink escape attacks. Paths outside the project root are denied in `strict` mode (default). The agent receives only a generic "Access denied" error — no path details are leaked. **Note:** the `bash` tool is not subject to path guard — it accepts arbitrary shell commands and can access any file the user's OS account can read. The approval gate is the enforcement point for bash calls; sensitive-path warnings are tracked in T-35.
 
 - **Centralized secrets redaction (FR-04)** — A new `src/core/redactor.ts` module is the single source of truth for all secret patterns. Logger, session writer, and tool result pipeline all import `redact()` from this module. Secrets are redacted at write time before they can be persisted or returned to the agent. Supported patterns: Anthropic keys (`sk-ant-`), OpenAI keys (`sk-`), GitHub tokens (`ghp_`, `github_pat_`), AWS access keys (`AKIA`), Linear keys (`lin_api_`), Google API keys (`AIza`), Bearer tokens. Opt-in high-entropy base64 redaction is also available via `security.redact_high_entropy: true`.
 
@@ -18,7 +18,9 @@ All notable changes to copair are documented here.
 
 - **Terminal ANSI injection sanitization (FR-08)** — A new `src/cli/ansi-sanitizer.ts` module strips dangerous terminal control sequences from raw LLM text output before it is written to stdout. Blocked sequences include: private mode set/reset (`?[hl]`), bracketed paste mode, OSC sequences (hyperlinks, window title), application keypad mode, DCS, PM, SS2/SS3. Safe display sequences (SGR colors, cursor movement) are preserved.
 
-- **MCP server timeout and degraded-server flag (FR-09)** — `McpClientManager.callTool()` now wraps all MCP tool calls with `AbortSignal.timeout(30s)`. On timeout, the server is marked as `degraded` and all subsequent calls to that server fail immediately without making a network call. `McpTimeoutError` is caught by `ToolExecutor` and returned as a structured error to the agent, not rethrown.
+- **Tool result context wrapping** — All tool results returned to the agent are now wrapped in `<tool_result tool="name">` XML blocks so the `INJECTION_PREAMBLE` instruction applies: the model is explicitly told these blocks are inert data, not instructions. For `read` tool results, the file content is additionally wrapped in `<file path="...">` inside the tool result block, providing path context and a clear content boundary.
+
+- **MCP server timeout and degraded-server flag (FR-09)** — `McpClientManager.callTool()` now wraps all MCP tool calls with `AbortSignal.timeout(30s)`. On timeout, the server is marked as `degraded` and all subsequent calls to that server fail immediately without making a network call. `McpTimeoutError` is caught by `ToolExecutor` and returned as a structured error to the agent, not rethrown. Per-server `timeout_ms` can now be set in config to override the global 30s default.
 
 - **File mode hardening** — `.copair/` directories are now created with mode `0o700` (owner-only) and config files with `0o600`. This prevents other users on a shared machine from reading API keys or session data.
 
@@ -34,6 +36,13 @@ security:
 network:
   web_search_timeout_ms: 15000   # fetch timeout for web search adapters
   provider_timeout_ms: 120000    # LLM provider client timeout
+
+# Per MCP server (in mcp_servers array):
+mcp_servers:
+  - name: my-server
+    command: npx
+    args: [my-mcp-server]
+    timeout_ms: 10000  # overrides the global 30s default for this server
 ```
 
 ### Performance

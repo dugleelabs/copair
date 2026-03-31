@@ -38,6 +38,7 @@ import { GitignoreManager } from './init/GitignoreManager.js';
 import { KnowledgeManager } from './knowledge/KnowledgeManager.js';
 import { KnowledgeSetupFlow } from './knowledge/KnowledgeSetupFlow.js';
 import { isCI } from './utils/environmentUtils.js';
+import { logger, LogLevel } from './core/logger.js';
 
 function resolveModel(
   config: CopairConfig,
@@ -108,6 +109,13 @@ async function resumeSession(
 
 async function main() {
   const cliOpts = parseArgs();
+
+  if (cliOpts.debug) {
+    logger.setLevel(LogLevel.DEBUG);
+  } else if (cliOpts.verbose) {
+    logger.setLevel(LogLevel.INFO);
+  }
+
   checkForUpdates(); // non-blocking background check
 
   const ci = isCI();
@@ -189,6 +197,7 @@ async function main() {
   if (knowledgeResult.found && knowledgeResult.content) {
     knowledgeManager.checkSizeBudget(knowledgeResult.sizeBytes);
     knowledgePrefix = knowledgeManager.injectIntoSystemPrompt(knowledgeResult.content);
+    logger.debug('knowledge', `Loaded COPAIR_KNOWLEDGE.md (${knowledgeResult.sizeBytes} bytes)`);
   } else if (!ci) {
     const setupFlow = new KnowledgeSetupFlow();
     const written = await setupFlow.run(cwd);

@@ -4,6 +4,7 @@ import { PathGuard } from './path-guard.js';
 import { redact } from './redactor.js';
 import { logger } from './logger.js';
 import { McpTimeoutError } from '../mcp/client.js';
+import type { AuditLog } from './audit-log.js';
 
 export interface ExecutionResult {
   content: string;
@@ -29,6 +30,7 @@ export interface ExecutionResult {
  */
 export class ToolExecutor {
   private readonly pathGuard: PathGuard;
+  private auditLog: AuditLog | null = null;
 
   constructor(
     private readonly registry: ToolRegistry,
@@ -40,6 +42,10 @@ export class ToolExecutor {
     } else {
       this.pathGuard = new PathGuard(pathGuardOrCwd ?? process.cwd());
     }
+  }
+
+  setAuditLog(log: AuditLog): void {
+    this.auditLog = log;
   }
 
   async execute(
@@ -61,6 +67,12 @@ export class ToolExecutor {
           .map((i) => `${i.path.join('.')}: ${i.message}`)
           .join('; ');
         logger.debug('tool-executor', `Schema rejection [${toolName}]: ${detail}`);
+        void this.auditLog?.append({
+          event: 'schema_rejection',
+          tool: toolName,
+          outcome: 'error',
+          detail,
+        });
         return { content: `Invalid tool input: ${detail}`, isError: true };
       }
     }
@@ -103,6 +115,14 @@ export class ToolExecutor {
         ? { ...result, content: redact(result.content) }
         : result;
 
+    void this.auditLog?.append({
+      event: 'tool_call',
+      tool: toolName,
+      input_summary: JSON.stringify(rawInput),
+      outcome: safeResult.isError ? 'error' : 'allowed',
+      detail: `${Math.round(elapsed)}ms`,
+    });
+
     return { ...safeResult, _durationMs: elapsed };
   }
 
@@ -134,6 +154,13 @@ export class ToolExecutor {
           result.reason === 'parent-missing'
             ? 'Parent directory does not exist.'
             : 'Access denied: the requested path is not accessible.';
+        void this.auditLog?.append({
+          event: 'path_block',
+          tool: toolName,
+          input_summary: String(raw),
+          outcome: 'denied',
+          detail: result.reason,
+        });
         return { content: reason, isError: true };
       }
 

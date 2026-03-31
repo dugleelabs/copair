@@ -39,6 +39,7 @@ import { KnowledgeManager } from './knowledge/KnowledgeManager.js';
 import { KnowledgeSetupFlow } from './knowledge/KnowledgeSetupFlow.js';
 import { isCI } from './utils/environmentUtils.js';
 import { logger, LogLevel } from './core/logger.js';
+import { AuditLog } from './core/audit-log.js';
 
 function resolveModel(
   config: CopairConfig,
@@ -296,6 +297,12 @@ async function main() {
     await SessionManager.cleanup(sessionsDir, config.context.max_sessions);
   }
 
+  // ── Audit log setup (P1) ──────────────────────────────────────────────────
+  const auditLog = new AuditLog(sessionManager.getSessionDir());
+  executor.setAuditLog(auditLog);
+  gate.setAuditLog(auditLog);
+  await auditLog.append({ event: 'session_start', outcome: 'allowed', detail: modelAlias });
+
   let identifierDerived = sessionResumed;
 
   // Wire session manager into /session command
@@ -374,6 +381,7 @@ async function main() {
       summarizer = new SessionSummarizer(provider, resolved.model);
     }
 
+    await auditLog.append({ event: 'session_end', outcome: 'allowed' });
     await sessionManager.close(messages, summarizer);
     await mcpManager.shutdown();
     appHandle?.unmount();

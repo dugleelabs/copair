@@ -1,3 +1,4 @@
+/* eslint-disable no-control-regex */
 /**
  * Terminal control sequence sanitization for LLM-generated text.
  *
@@ -8,6 +9,9 @@
  * Uses a denylist of known input-injection vectors rather than an allowlist
  * of safe sequences — an allowlist would break legitimate rendering (colors,
  * box-drawing characters).
+ *
+ * no-control-regex is disabled for this file: \x1b (ESC) is the ANSI escape
+ * character and its presence in these patterns is intentional and required.
  */
 
 /**

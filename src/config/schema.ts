@@ -101,7 +101,7 @@ export const CopairConfigSchema = z.object({
   version: z.number().int().positive(),
   default_model: z.string().optional(),
   providers: z.record(z.string(), ProviderConfigSchema).default({}),
-  permissions: PermissionsConfigSchema.default({ mode: 'ask', allow_commands: [] }),
+  permissions: PermissionsConfigSchema.default(() => PermissionsConfigSchema.parse({})),
   feature_flags: FeatureFlagsSchema.default({ model_routing: false }),
   mcp_servers: z.array(McpServerConfigSchema).default([]),
   web_search: WebSearchConfigSchema.optional(),

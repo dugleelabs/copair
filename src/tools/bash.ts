@@ -2,6 +2,33 @@ import { execSync } from 'node:child_process';
 import { z } from 'zod';
 import type { Tool } from './interface.js';
 
+/**
+ * Paths that, when referenced in a bash command, warrant a visible warning
+ * before the approval prompt. These are credential or system paths outside
+ * the project root that the user should consciously approve.
+ */
+export const SENSITIVE_PATH_PATTERNS: Array<{ name: string; pattern: RegExp }> = [
+  { name: '~/.ssh/', pattern: /~\/\.ssh\b/ },
+  { name: '~/.aws/', pattern: /~\/\.aws\b/ },
+  { name: '~/.gnupg/', pattern: /~\/\.gnupg\b/ },
+  { name: '/etc/', pattern: /\/etc\// },
+  { name: '/private/', pattern: /\/private\// },
+  { name: '~/.config/', pattern: /~\/\.config\b/ },
+  { name: '~/.netrc', pattern: /~\/\.netrc\b/ },
+  { name: '~/.npmrc', pattern: /~\/\.npmrc\b/ },
+  { name: '~/.pypirc', pattern: /~\/\.pypirc\b/ },
+];
+
+/**
+ * Scan a bash command string for references to sensitive system paths.
+ * Returns the names of all matched patterns (empty array = no matches).
+ */
+export function detectSensitivePaths(command: string): string[] {
+  return SENSITIVE_PATH_PATTERNS
+    .filter(({ pattern }) => pattern.test(command))
+    .map(({ name }) => name);
+}
+
 export const BashInputSchema = z.object({
   command: z.string().min(1),
   timeout: z.number().int().positive().optional(),

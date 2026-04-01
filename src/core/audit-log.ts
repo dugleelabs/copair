@@ -25,7 +25,8 @@ export type AuditEvent =
   | 'approval'
   | 'denial'
   | 'path_block'
-  | 'schema_rejection';
+  | 'schema_rejection'
+  | 'bash_sensitive_path';
 
 export type AuditOutcome = 'allowed' | 'denied' | 'error';
 

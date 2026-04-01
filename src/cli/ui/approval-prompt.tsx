@@ -35,6 +35,18 @@ export function ApprovalPrompt({ request, onRespond: _onRespond }: ApprovalPromp
           )}
         </Box>
 
+        {/* Sensitive path warning — shown before command summary when present */}
+        {request.warning && (
+          <Box marginTop={1}>
+            <Text color="red" bold>{'\u26A0'} WARNING: </Text>
+            <Text wrap="wrap">
+              {'This command accesses a sensitive system path outside the project root ('}
+              {request.warning}
+              {')'}
+            </Text>
+          </Box>
+        )}
+
         {/* Tool name and full summary — NO truncation */}
         <Box marginTop={1}>
           <Text bold>{request.toolName}: </Text>

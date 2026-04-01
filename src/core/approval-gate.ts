@@ -184,6 +184,9 @@ export class ApprovalGate {
   ): Promise<boolean> {
     return new Promise((resolve) => {
       const summary = formatSummary(toolName, input);
+      const warning = typeof input._sensitivePathWarning === 'string'
+        ? input._sensitivePathWarning
+        : undefined;
 
       this.bridge!.emit('approval-request', {
         toolName,
@@ -191,6 +194,7 @@ export class ApprovalGate {
         summary,
         index: this.pendingIndex,
         total: this.pendingTotal,
+        warning,
       }, (answer: ApprovalAnswer) => {
         switch (answer) {
           case 'allow':
@@ -237,6 +241,16 @@ export class ApprovalGate {
     key: string,
     defaultAllow = false,
   ): boolean {
+    const warning = typeof input._sensitivePathWarning === 'string'
+      ? input._sensitivePathWarning
+      : undefined;
+
+    if (warning) {
+      process.stdout.write(
+        chalk.red(`\n  \u26A0  WARNING: This command accesses a sensitive system path outside the project root (${warning})\n`),
+      );
+    }
+
     const summary = formatSummary(toolName, input);
     const boxWidth = Math.max(summary.length + 6, 56);
     const topBar = '\u2500'.repeat(boxWidth);

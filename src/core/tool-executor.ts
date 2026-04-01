@@ -5,6 +5,7 @@ import { redact } from './redactor.js';
 import { logger } from './logger.js';
 import { McpTimeoutError } from '../mcp/client.js';
 import type { AuditLog } from './audit-log.js';
+import { detectSensitivePaths } from '../tools/bash.js';
 
 export interface ExecutionResult {
   content: string;
@@ -77,6 +78,23 @@ export class ToolExecutor {
       }
     }
 
+    // T-35: Bash sensitive-path warning — scan before showing approval prompt so
+    // the user sees the warning and can make an informed decision. Does NOT block.
+    if (toolName === 'bash' && typeof rawInput.command === 'string') {
+      const matched = detectSensitivePaths(rawInput.command);
+      if (matched.length > 0) {
+        const detail = matched.join(', ');
+        void this.auditLog?.append({
+          event: 'bash_sensitive_path',
+          tool: 'bash',
+          input_summary: rawInput.command,
+          outcome: 'allowed',
+          detail,
+        });
+        rawInput._sensitivePathWarning = detail;
+      }
+    }
+
     const allowed = await this.gate.allow(toolName, rawInput);
     if (!allowed) {
       return {
@@ -95,6 +113,9 @@ export class ToolExecutor {
     // call PathGuard directly.
     const pathError = this.checkPaths(toolName, rawInput);
     if (pathError) return pathError;
+
+    // Remove internal metadata injected for the approval UI before executing.
+    delete rawInput._sensitivePathWarning;
 
     // Time only the actual tool execution, not the approval prompt
     const start = performance.now();

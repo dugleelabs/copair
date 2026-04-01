@@ -47,14 +47,25 @@ export interface SuggestionHintProps {
   bridge: AgentBridge;
   enabled?: boolean;
   rules?: SuggestionRule[];
+  /** Seed values for the suggestion context, populated at session startup. */
+  initialContext?: Partial<SuggestionContext>;
+  /** Fired whenever the active suggestion changes (or becomes null). */
+  onSuggestionChange?: (suggestion: SuggestionRule | null) => void;
 }
 
-export function SuggestionHint({ bridge, enabled = true, rules = DEFAULT_RULES }: SuggestionHintProps) {
+export function SuggestionHint({
+  bridge,
+  enabled = true,
+  rules = DEFAULT_RULES,
+  initialContext,
+  onSuggestionChange,
+}: SuggestionHintProps) {
   const [context, setContext] = useState<SuggestionContext>({
     lastToolNames: [],
     editCount: 0,
     hasTestFramework: false,
     sessionCount: 0,
+    ...initialContext,
   });
 
   useEffect(() => {
@@ -69,7 +80,6 @@ export function SuggestionHint({ bridge, enabled = true, rules = DEFAULT_RULES }
     };
 
     const onTurnComplete = () => {
-      // Reset tool tracking for fresh suggestions
       setContext((prev) => ({ ...prev, lastToolNames: [] }));
     };
 
@@ -81,10 +91,14 @@ export function SuggestionHint({ bridge, enabled = true, rules = DEFAULT_RULES }
     };
   }, [bridge]);
 
-  if (!enabled) return null;
+  const activeSuggestion = enabled ? (rules.find((rule) => rule.condition(context)) ?? null) : null;
 
-  const activeSuggestion = rules.find((rule) => rule.condition(context));
-  if (!activeSuggestion) return null;
+  // Notify parent whenever the active suggestion changes
+  useEffect(() => {
+    onSuggestionChange?.(activeSuggestion);
+  }, [activeSuggestion, onSuggestionChange]);
+
+  if (!enabled || activeSuggestion === null) return null;
 
   return (
     <Box marginLeft={2}>

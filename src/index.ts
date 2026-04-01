@@ -1,4 +1,5 @@
 import { join } from 'node:path';
+import { existsSync, readFileSync } from 'node:fs';
 import { parseArgs } from './cli/args.js';
 import { Agent } from './core/agent.js';
 import { loadConfig, resolveEnvVarString } from './config/loader.js';
@@ -41,6 +42,24 @@ import { isCI } from './utils/environmentUtils.js';
 import { logger, LogLevel } from './core/logger.js';
 import { AuditLog } from './core/audit-log.js';
 import { runAuditCommand } from './cli/commands/audit.js';
+
+/**
+ * Detect whether `cwd` contains a test framework config or a `test` script
+ * in package.json. Used to populate `hasTestFramework` in SuggestionContext.
+ */
+function detectTestFramework(cwd: string): boolean {
+  const patterns = [
+    'vitest.config.ts', 'vitest.config.js', 'vitest.config.mjs',
+    'jest.config.ts', 'jest.config.js', 'jest.config.mjs',
+  ];
+  if (patterns.some((f) => existsSync(join(cwd, f)))) return true;
+  try {
+    const pkg = JSON.parse(readFileSync(join(cwd, 'package.json'), 'utf8'));
+    return Boolean(pkg.scripts?.test);
+  } catch {
+    return false;
+  }
+}
 
 function resolveModel(
   config: CopairConfig,
@@ -167,20 +186,8 @@ async function main() {
   const agentBridge = new AgentBridge();
   gate.setBridge(agentBridge);
 
-  // Deferred MCP initialization — starts after REPL is up
+  // MCP initialization is deferred until after the ink UI is mounted — see below.
   const mcpManager = new McpClientManager();
-  if (config.mcp_servers.length > 0) {
-    setImmediate(async () => {
-      try {
-        await mcpManager.initialize(config.mcp_servers);
-        const bridge = new McpBridge(mcpManager, toolRegistry);
-        await bridge.registerAll();
-      } catch (err) {
-        const msg = err instanceof Error ? err.message : String(err);
-        process.stderr.write(`[mcp] Failed to initialize MCP servers: ${msg}\n`);
-      }
-    });
-  }
 
   // Trust .copair/ directory so scaffolding writes skip approval (even in deny mode)
   gate.addTrustedPath(join(cwd, '.copair'));
@@ -399,6 +406,12 @@ async function main() {
     uiConfig: config.ui,
     history: inputHistory,
     completionEngine,
+    initialContext: {
+      hasTestFramework: detectTestFramework(cwd),
+      // Session picker already ran before ink — user chose resume or fresh.
+      // No need to re-suggest resuming.
+      sessionCount: 0,
+    },
     onHistoryAppend: (entry: string) => {
       inputHistory.push(entry);
       appendHistory(historyPath, entry);
@@ -504,6 +517,20 @@ async function main() {
       agentBridge.emit('turn-complete');
     },
   });
+
+  // ── MCP initialization (after ink is mounted — avoids racing session picker) ─
+  if (config.mcp_servers.length > 0) {
+    setImmediate(async () => {
+      try {
+        await mcpManager.initialize(config.mcp_servers);
+        const bridge = new McpBridge(mcpManager, toolRegistry);
+        await bridge.registerAll();
+      } catch (err) {
+        const msg = err instanceof Error ? err.message : String(err);
+        agentBridge.emit('error', `[mcp] Failed to initialize MCP servers: ${msg}`);
+      }
+    });
+  }
 
   // Wait for ink to exit (Ctrl+C handled by ink)
   await appHandle.waitForExit().then(doExit);

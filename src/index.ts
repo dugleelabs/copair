@@ -408,7 +408,9 @@ async function main() {
     completionEngine,
     initialContext: {
       hasTestFramework: detectTestFramework(cwd),
-      sessionCount: sessions.length,
+      // Session picker already ran before ink — user chose resume or fresh.
+      // No need to re-suggest resuming.
+      sessionCount: 0,
     },
     onHistoryAppend: (entry: string) => {
       inputHistory.push(entry);

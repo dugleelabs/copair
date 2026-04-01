@@ -53,12 +53,34 @@ export function detectWordDeletion(input: string, key: InputKey): boolean {
 /**
  * Return true if the input should be treated as a multiline paste.
  *
- * Pasted content arrives as a single input string containing '\n'.
- * Ctrl / Meta prefixed inputs are excluded so that Ctrl+J (line-feed control)
- * is never misidentified as a paste.
+ * Pasted content arrives as a single input string containing line breaks.
+ * macOS terminals send `\r` (not `\n`) for newlines in raw mode, so we
+ * check for both.  Terminals with bracketed paste mode wrap the content
+ * in `\x1b[200~`…`\x1b[201~`; ink strips the leading `\x1b`, leaving
+ * `[200~` as a reliable prefix.
+ *
+ * Ctrl / Meta prefixed inputs are excluded so that Ctrl+J (line-feed
+ * control) is never misidentified as a paste.
  */
 export function isPasteInput(input: string, key: InputKey): boolean {
-  return !key.ctrl && !key.meta && input.includes('\n');
+  if (key.ctrl || key.meta) return false;
+  // Bracketed pastanale marker (leading \x1b already stripped by ink)
+  if (input.startsWith('[200~')) return true;
+  // Multi-character input with line breaks (\n or \r)
+  return input.length > 1 && /[\n\r]/.test(input);
+}
+
+/**
+ * Normalize raw pasted content for storage:
+ *   - Strip bracketed paste markers (\x1b[200~ / \x1b[201~)
+ *   - Normalize line endings: \r\n → \n, lone \r → \n
+ */
+export function cleanPastedInput(input: string): string {
+  return input
+    .replace(/^\[200~/, '')        // leading marker (ink already stripped \x1b)
+    .replace(/\x1b\[201~$/, '')    // trailing marker
+    .replace(/\r\n/g, '\n')        // CRLF → LF
+    .replace(/\r/g, '\n');         // lone CR → LF
 }
 
 // ── Word boundary functions ────────────────────────────────────────────────

@@ -12,6 +12,7 @@ import {
   detectWordNav,
   detectWordDeletion,
   isPasteInput,
+  cleanPastedInput,
   wordBoundaryLeft,
 } from '../../../src/cli/ui/cursor-utils.js';
 import { supportsUnicode, hasInkGhostingIssue } from '../../../src/cli/ui/bordered-input.js';
@@ -114,6 +115,44 @@ describe('isPasteInput — multiline paste detection', () => {
 
   it('multiple newlines → true', () => {
     expect(isPasteInput('a\nb\nc\nd', noMod)).toBe(true);
+  });
+
+  it('input with \\r (macOS raw mode) → true', () => {
+    expect(isPasteInput('line1\rline2', noMod)).toBe(true);
+  });
+
+  it('input with \\r\\n (CRLF) → true', () => {
+    expect(isPasteInput('line1\r\nline2', noMod)).toBe(true);
+  });
+
+  it('bracketed paste marker → true (even single-line)', () => {
+    expect(isPasteInput('[200~some text\x1b[201~', noMod)).toBe(true);
+  });
+
+  it('single \\r (lone carriage return, length 1) → false', () => {
+    expect(isPasteInput('\r', noMod)).toBe(false);
+  });
+});
+
+describe('cleanPastedInput — normalize pasted content', () => {
+  it('strips bracketed paste markers', () => {
+    expect(cleanPastedInput('[200~hello\x1b[201~')).toBe('hello');
+  });
+
+  it('normalizes \\r to \\n (macOS raw mode)', () => {
+    expect(cleanPastedInput('line1\rline2')).toBe('line1\nline2');
+  });
+
+  it('normalizes \\r\\n to \\n', () => {
+    expect(cleanPastedInput('line1\r\nline2')).toBe('line1\nline2');
+  });
+
+  it('handles bracketed paste with \\r line endings', () => {
+    expect(cleanPastedInput('[200~a\rb\rc\x1b[201~')).toBe('a\nb\nc');
+  });
+
+  it('passes through clean input unchanged', () => {
+    expect(cleanPastedInput('hello\nworld')).toBe('hello\nworld');
   });
 });
 

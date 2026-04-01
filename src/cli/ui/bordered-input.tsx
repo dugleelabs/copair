@@ -1,7 +1,7 @@
 import React, { useState, useEffect, useCallback, useRef } from 'react';
 import { Box, Text, useStdout, useInput } from 'ink';
 import { CursorText } from './cursor-text.js';
-import { wordBoundaryLeft, wordBoundaryRight, detectWordNav, detectWordDeletion, isPasteInput } from './cursor-utils.js';
+import { wordBoundaryLeft, wordBoundaryRight, detectWordNav, detectWordDeletion, isPasteInput, cleanPastedInput } from './cursor-utils.js';
 import type { CompletionEngine } from './completion-providers.js';
 
 // ── Types ───────────────────────────────────────────────────────────────────
@@ -137,7 +137,7 @@ export function BorderedInput({
   useInput((input, key) => {
     if (!isActive) return;
 
-    // ── 1. Multiline buffer mode — intercepts Enter and Escape first ──────────
+    // ── 1. Multiline buffer mode — intercepts Enter, Escape, and scroll keys ──
     if (multiLineBuffer !== null) {
       if (key.return) {
         onHistoryAppend?.(multiLineBuffer);
@@ -156,7 +156,7 @@ export function BorderedInput({
         return;
       }
       // All other keys fall through to normal single-line handling so the user
-      // can still type / edit / navigate while the buffer preview is visible.
+      // can still type / edit while the buffer preview is visible.
     }
 
     // ── 1b. Paste detection — must precede history/submit handling ────────────
@@ -164,7 +164,7 @@ export function BorderedInput({
     // Store in buffer immediately; never pass the newline-containing string
     // through CursorText rendering (fixes the paste-freeze defect).
     if (isPasteInput(input, key)) {
-      setMultiLineBuffer(input);
+      setMultiLineBuffer(cleanPastedInput(input));
       setValue('');
       setCursorPos(0);
       return;
@@ -344,25 +344,34 @@ export function BorderedInput({
   }, { isActive });
 
   // ── Multiline preview (shared between bordered and plain paths) ────────────
+  // Don't render raw content lines — arbitrary Unicode/ANSI in pasted text
+  // (box-drawing chars, escape sequences) makes inline rendering unreliable.
+  // Instead show a compact badge + sanitized first-line hint.
 
   function renderMultilinePreview() {
     if (!multiLineBuffer) return null;
     const lines = multiLineBuffer.split('\n');
-    const preview = lines.slice(0, 3);
-    const overflow = lines.length - 3;
+    const totalLines = lines.length;
     const byteLen = Buffer.byteLength(multiLineBuffer, 'utf8');
+    const sizeStr = byteLen >= 1024 ? `${(byteLen / 1024).toFixed(1)} KB` : `${byteLen} B`;
+
+    // Sanitize first non-empty line to ASCII printable only (0x20–0x7E)
+    const firstNonEmpty = lines.find((l) => l.trim()) ?? '';
+    // eslint-disable-next-line no-control-regex
+    const sanitized = firstNonEmpty.replace(/[^\x20-\x7E]/g, '').trim();
+    const maxHint = Math.max(20, columns - 14);
+    const hint = sanitized.length > maxHint ? sanitized.slice(0, maxHint - 1) + '…' : sanitized;
+
     return (
       <Box flexDirection="column" marginBottom={1}>
-        {preview.map((line, i) => (
-          <Text key={i} dimColor>{line || ' '}</Text>
-        ))}
-        {overflow > 0 && (
-          <Text dimColor>  ... {overflow} more line{overflow !== 1 ? 's' : ''}</Text>
-        )}
-        <Box justifyContent="space-between">
-          <Text dimColor>[Enter to send · Esc to discard]</Text>
-          <Text dimColor>{lines.length} lines · {(byteLen / 1024).toFixed(1)} KB</Text>
+        <Box gap={1}>
+          <Text color="cyan">⎘</Text>
+          <Text bold>{totalLines} line{totalLines !== 1 ? 's' : ''}</Text>
+          <Text dimColor>·</Text>
+          <Text dimColor>{sizeStr}</Text>
+          {hint ? <Text dimColor>· "{hint}"</Text> : null}
         </Box>
+        <Text dimColor>[Enter to send · Esc to discard]</Text>
       </Box>
     );
   }

@@ -78,7 +78,7 @@ export function isPasteInput(input: string, key: InputKey): boolean {
 export function cleanPastedInput(input: string): string {
   return input
     .replace(/^\[200~/, '')        // leading marker (ink already stripped \x1b)
-    .replace(/\x1b\[201~$/, '')    // trailing marker
+    .replace(new RegExp(String.fromCharCode(0x1b) + '\\[201~$'), '')  // trailing marker
     .replace(/\r\n/g, '\n')        // CRLF → LF
     .replace(/\r/g, '\n');         // lone CR → LF
 }

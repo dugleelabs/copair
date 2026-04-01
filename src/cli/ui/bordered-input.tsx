@@ -357,7 +357,6 @@ export function BorderedInput({
 
     // Sanitize first non-empty line to ASCII printable only (0x20–0x7E)
     const firstNonEmpty = lines.find((l) => l.trim()) ?? '';
-    // eslint-disable-next-line no-control-regex
     const sanitized = firstNonEmpty.replace(/[^\x20-\x7E]/g, '').trim();
     const maxHint = Math.max(20, columns - 14);
     const hint = sanitized.length > maxHint ? sanitized.slice(0, maxHint - 1) + '…' : sanitized;

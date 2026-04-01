@@ -266,11 +266,17 @@ export function BorderedInput({
       }
       return;
     }
+    // ink maps \x7f (Mac Delete/Backspace key) to key.delete, NOT key.backspace.
+    // ink's nonAlphanumericKeys clears `input` for ALL named keys, so we cannot
+    // distinguish \x7f from \x1b[3~ (fn+Delete) — both arrive as key.delete + input=''.
+    // Treat key.delete as backward delete: \x7f is the Mac Delete key (ASCII DEL
+    // used as Backspace) and is far more common than fn+Delete in practice.
     if (key.delete) {
-      const chars = [...value];
-      if (cursorPos < chars.length) {
-        chars.splice(cursorPos, 1);
+      if (cursorPos > 0) {
+        const chars = [...value];
+        chars.splice(cursorPos - 1, 1);
         setValue(chars.join(''));
+        setCursorPos(cursorPos - 1);
         historyIdx.current = -1;
       }
       return;
@@ -325,7 +331,7 @@ export function BorderedInput({
     // Guard: filter unrecognised control sequences and modifier-prefixed keys.
     // input.codePointAt(0) >= 0x20 ensures we only insert printable characters.
     const cp = input.codePointAt(0);
-    if (cp === undefined || cp < 0x20) return;
+    if (cp === undefined || cp < 0x20 || cp === 0x7f) return;
     if (key.ctrl || key.meta) return;
 
     const chars = [...value];

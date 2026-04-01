@@ -186,20 +186,8 @@ async function main() {
   const agentBridge = new AgentBridge();
   gate.setBridge(agentBridge);
 
-  // Deferred MCP initialization — starts after REPL is up
+  // MCP initialization is deferred until after the ink UI is mounted — see below.
   const mcpManager = new McpClientManager();
-  if (config.mcp_servers.length > 0) {
-    setImmediate(async () => {
-      try {
-        await mcpManager.initialize(config.mcp_servers);
-        const bridge = new McpBridge(mcpManager, toolRegistry);
-        await bridge.registerAll();
-      } catch (err) {
-        const msg = err instanceof Error ? err.message : String(err);
-        process.stderr.write(`[mcp] Failed to initialize MCP servers: ${msg}\n`);
-      }
-    });
-  }
 
   // Trust .copair/ directory so scaffolding writes skip approval (even in deny mode)
   gate.addTrustedPath(join(cwd, '.copair'));
@@ -527,6 +515,20 @@ async function main() {
       agentBridge.emit('turn-complete');
     },
   });
+
+  // ── MCP initialization (after ink is mounted — avoids racing session picker) ─
+  if (config.mcp_servers.length > 0) {
+    setImmediate(async () => {
+      try {
+        await mcpManager.initialize(config.mcp_servers);
+        const bridge = new McpBridge(mcpManager, toolRegistry);
+        await bridge.registerAll();
+      } catch (err) {
+        const msg = err instanceof Error ? err.message : String(err);
+        agentBridge.emit('error', `[mcp] Failed to initialize MCP servers: ${msg}`);
+      }
+    });
+  }
 
   // Wait for ink to exit (Ctrl+C handled by ink)
   await appHandle.waitForExit().then(doExit);

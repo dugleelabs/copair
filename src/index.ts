@@ -1,4 +1,5 @@
 import { join } from 'node:path';
+import { existsSync, readFileSync } from 'node:fs';
 import { parseArgs } from './cli/args.js';
 import { Agent } from './core/agent.js';
 import { loadConfig, resolveEnvVarString } from './config/loader.js';
@@ -41,6 +42,24 @@ import { isCI } from './utils/environmentUtils.js';
 import { logger, LogLevel } from './core/logger.js';
 import { AuditLog } from './core/audit-log.js';
 import { runAuditCommand } from './cli/commands/audit.js';
+
+/**
+ * Detect whether `cwd` contains a test framework config or a `test` script
+ * in package.json. Used to populate `hasTestFramework` in SuggestionContext.
+ */
+function detectTestFramework(cwd: string): boolean {
+  const patterns = [
+    'vitest.config.ts', 'vitest.config.js', 'vitest.config.mjs',
+    'jest.config.ts', 'jest.config.js', 'jest.config.mjs',
+  ];
+  if (patterns.some((f) => existsSync(join(cwd, f)))) return true;
+  try {
+    const pkg = JSON.parse(readFileSync(join(cwd, 'package.json'), 'utf8'));
+    return Boolean(pkg.scripts?.test);
+  } catch {
+    return false;
+  }
+}
 
 function resolveModel(
   config: CopairConfig,
@@ -399,6 +418,10 @@ async function main() {
     uiConfig: config.ui,
     history: inputHistory,
     completionEngine,
+    initialContext: {
+      hasTestFramework: detectTestFramework(cwd),
+      sessionCount: sessions.length,
+    },
     onHistoryAppend: (entry: string) => {
       inputHistory.push(entry);
       appendHistory(historyPath, entry);

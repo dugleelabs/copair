@@ -5,6 +5,10 @@ import { BorderedInput } from './bordered-input.js';
 import { StatusBar } from './status-bar.js';
 import { ApprovalHandler } from './approval-handler.js';
 import { DiffView } from './diff-view.js';
+import { ActivityBar } from './activity-bar.js';
+import { SuggestionHint } from './suggestion-hint.js';
+import { HistorySearch } from './history-search.js';
+import type { SuggestionRule, SuggestionContext } from './suggestion-hint.js';
 import type { CompletionEngine } from './completion-providers.js';
 
 // ── Types ───────────────────────────────────────────────────────────────────
@@ -257,6 +261,8 @@ interface CopairAppProps {
   onHistoryAppend?: (entry: string) => void;
   onSlashCommand?: (command: string, args?: string) => Promise<void> | void;
   onExit?: () => Promise<void> | void;
+  /** Initial suggestion context values, set at startup by src/index.ts (FR-06). */
+  initialContext?: Partial<SuggestionContext>;
 }
 
 const CopairApp = forwardRef<AppImperativeHandle, CopairAppProps>(function CopairApp(
@@ -271,6 +277,7 @@ const CopairApp = forwardRef<AppImperativeHandle, CopairAppProps>(function Copai
     onHistoryAppend,
     onSlashCommand,
     onExit: _onExit,
+    initialContext,
   },
   ref,
 ) {
@@ -305,7 +312,16 @@ const CopairApp = forwardRef<AppImperativeHandle, CopairAppProps>(function Copai
     notification: null,
   });
 
-  const spinner = useSpinner(state.phase === 'thinking');
+  // ── Spinner (always running when active — passed to ActivityBar) ──────────
+  const spinner = useSpinner(state.phase === 'thinking' || state.phase === 'streaming');
+
+  // ── Active suggestion (lifted from SuggestionHint for Tab-to-accept) ──────
+  const [activeSuggestion, setActiveSuggestion] = useState<SuggestionRule | null>(null);
+
+  // ── History search visibility + injected input (Ctrl+R, FR-07) ───────────
+  const [historySearchVisible, setHistorySearchVisible] = useState(false);
+  const [injectedInput, setInjectedInput] = useState<{ value: string; nonce: number } | undefined>(undefined);
+  const injectedNonce = useRef(0);
 
   // Expose updateModel/updateSession to parent via ref
   useImperativeHandle(ref, () => ({
@@ -326,7 +342,6 @@ const CopairApp = forwardRef<AppImperativeHandle, CopairAppProps>(function Copai
         exit();
         return;
       }
-      // Show notification in the dynamic area (near input/status), not in output
       setState((prev) => ({ ...prev, notification: 'Press Ctrl+C again to exit (or /exit)' }));
       if (ctrlCTimer.current) clearTimeout(ctrlCTimer.current);
       ctrlCTimer.current = setTimeout(() => {
@@ -345,7 +360,6 @@ const CopairApp = forwardRef<AppImperativeHandle, CopairAppProps>(function Copai
 
     const onToolStart = (tool: { name: string; label: string }) => {
       setState((prev) => prev.phase === 'thinking' ? { ...prev, phase: 'streaming' } : prev);
-      // If there was live text, finalize it to static
       setLiveText((prev) => {
         if (prev) {
           setStaticItems((items) => [
@@ -400,7 +414,6 @@ const CopairApp = forwardRef<AppImperativeHandle, CopairAppProps>(function Copai
     };
 
     const onTurnComplete = () => {
-      // Finalize any remaining live text to static
       setLiveText((prev) => {
         if (prev) {
           setStaticItems((items) => [
@@ -443,7 +456,6 @@ const CopairApp = forwardRef<AppImperativeHandle, CopairAppProps>(function Copai
   }, [bridge]);
 
   const handleSubmit = useCallback((input: string) => {
-    // Persist user message in scrollback
     setStaticItems((items) => [
       ...items,
       { id: nextId.current++, type: 'user' as StaticItem['type'], content: input },
@@ -456,6 +468,15 @@ const CopairApp = forwardRef<AppImperativeHandle, CopairAppProps>(function Copai
       setState((prev) => ({ ...prev, phase: 'input' }));
     });
   }, [onMessage, bridge]);
+
+  // Intercept history-search slash command at the app level (FR-07)
+  const handleSlashCommand = useCallback(async (command: string, args?: string) => {
+    if (command === 'history-search') {
+      setHistorySearchVisible(true);
+      return;
+    }
+    await onSlashCommand?.(command, args);
+  }, [onSlashCommand]);
 
   return (
     <Box flexDirection="column">
@@ -486,11 +507,6 @@ const CopairApp = forwardRef<AppImperativeHandle, CopairAppProps>(function Copai
 
       {/* ── Dynamic area (re-rendered in place) ─────────────────────── */}
 
-      {/* Thinking spinner */}
-      {state.phase === 'thinking' && (
-        <Text>  <Text color="magenta">{spinner.frame}</Text> <Text dimColor>thinking... <Text color="gray">{spinner.elapsed}</Text></Text></Text>
-      )}
-
       {/* Live streaming text */}
       {liveText && (
         <Box flexDirection="column">
@@ -498,21 +514,49 @@ const CopairApp = forwardRef<AppImperativeHandle, CopairAppProps>(function Copai
         </Box>
       )}
 
-      {/* Live tool indicator */}
-      {liveTool && (
-        <Text color="green">  {'\u25CF'} {liveTool}</Text>
+      {/* Activity bar — always rendered, fixed height, replaces the three
+          conditional elements (spinner / streaming indicator / tool indicator)
+          that previously caused vertical layout shifts (FR-05). */}
+      <ActivityBar
+        phase={state.phase}
+        spinnerFrame={spinner.frame}
+        spinnerElapsed={spinner.elapsed}
+        liveTool={liveTool}
+      />
+
+      {/* Auto-recommendations — gated by config.suggestions (FR-06) */}
+      {config.suggestions && (
+        <SuggestionHint
+          bridge={bridge}
+          enabled={config.suggestions}
+          onSuggestionChange={setActiveSuggestion}
+          initialContext={initialContext}
+        />
       )}
+
+      {/* Reverse history search overlay (FR-07) */}
+      <HistorySearch
+        history={history ?? []}
+        visible={historySearchVisible}
+        onSelect={(selected) => {
+          setHistorySearchVisible(false);
+          injectedNonce.current += 1;
+          setInjectedInput({ value: selected, nonce: injectedNonce.current });
+        }}
+        onDismiss={() => setHistorySearchVisible(false)}
+      />
 
       {/* Approval prompt */}
       <ApprovalHandler bridge={bridge} />
 
-      {/* Notification (e.g. Ctrl+C warning) — above input, near status */}
+      {/* Notification (e.g. Ctrl+C warning) */}
       {state.notification && (
         <Text color="yellow">{state.notification}</Text>
       )}
 
-      {/* Input area — full bordered box only during input phase */}
-      {state.phase === 'input' ? (
+      {/* Input area — hidden while history search is active to prevent
+          BorderedInput's useInput from intercepting keys (FR-07). */}
+      {state.phase === 'input' && !historySearchVisible ? (
         <BorderedInput
           sessionIdentifier={state.sessionIdentifier}
           bordered={config.bordered_input}
@@ -521,7 +565,9 @@ const CopairApp = forwardRef<AppImperativeHandle, CopairAppProps>(function Copai
           completionEngine={completionEngine}
           onSubmit={handleSubmit}
           onHistoryAppend={onHistoryAppend}
-          onSlashCommand={onSlashCommand}
+          onSlashCommand={handleSlashCommand}
+          activeSuggestion={activeSuggestion}
+          injectedValue={injectedInput}
         />
       ) : null}
 
@@ -550,6 +596,7 @@ export function renderApp(
     onHistoryAppend?: (entry: string) => void;
     onSlashCommand?: (command: string, args?: string) => Promise<void> | void;
     onExit?: () => Promise<void> | void;
+    initialContext?: Partial<SuggestionContext>;
   },
 ): AppHandle {
   let imperativeHandle: AppImperativeHandle | null = null;
@@ -571,6 +618,7 @@ export function renderApp(
       onHistoryAppend={options?.onHistoryAppend}
       onSlashCommand={options?.onSlashCommand}
       onExit={options?.onExit}
+      initialContext={options?.initialContext}
     />,
     { exitOnCtrlC: false },
   );

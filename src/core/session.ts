@@ -1,5 +1,6 @@
 import { writeFile, rename, appendFile, readFile, readdir, rm, mkdir, stat } from 'node:fs/promises';
 import { existsSync, mkdirSync } from 'node:fs';
+import { redact } from './redactor.js';
 import { join, resolve } from 'node:path';
 import { execSync } from 'node:child_process';
 import { randomUUID } from 'node:crypto';
@@ -219,7 +220,7 @@ export class SessionManager {
     const jsonlPath = join(this.sessionDir, 'messages.jsonl');
     const gzPath = join(this.sessionDir, 'messages.jsonl.gz');
 
-    const jsonl = newMessages.map((msg) => JSON.stringify(msg)).join('\n') + '\n';
+    const jsonl = redact(newMessages.map((msg) => JSON.stringify(msg)).join('\n') + '\n');
 
     // If compressed file exists, decompress-append-recompress
     if (existsSync(gzPath)) {

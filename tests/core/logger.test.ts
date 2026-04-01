@@ -45,7 +45,7 @@ describe('Logger', () => {
 
     const output = stderrSpy.mock.calls[0][0] as string;
     expect(output).not.toContain('sk-proj-abc123');
-    expect(output).toContain('[REDACTED]');
+    expect(output).toContain('[REDACTED:openai]');
   });
 
   it('redacts Linear API keys', () => {
@@ -53,7 +53,7 @@ describe('Logger', () => {
     logger.debug('config', 'key: lin_api_test12345678');
 
     const output = stderrSpy.mock.calls[0][0] as string;
-    expect(output).toContain('[REDACTED]');
+    expect(output).toContain('[REDACTED:linear]');
   });
 
   it('redacts Bearer tokens', () => {
@@ -61,7 +61,7 @@ describe('Logger', () => {
     logger.debug('http', 'Authorization: Bearer eyJhbGciOi.test.token');
 
     const output = stderrSpy.mock.calls[0][0] as string;
-    expect(output).toContain('[REDACTED]');
+    expect(output).toContain('Bearer [REDACTED]');
     expect(output).not.toContain('eyJhbGciOi');
   });
 

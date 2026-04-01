@@ -4,6 +4,7 @@ import { MarkdownWriter } from './markdown.js';
 import type { StreamChunk } from '../providers/interface.js';
 import type { AgentBridge } from './ui/agent-bridge.js';
 import type { StreamingMarkupFilter } from '../core/formats/index.js';
+import { sanitizeForTerminal } from './ansi-sanitizer.js';
 
 /**
  * Build a human-readable one-liner for a tool call, e.g.:
@@ -115,7 +116,10 @@ export class Renderer {
           if (this.currentToolName) {
             this.endToolIndicator();
           }
-          const raw = chunk.text ?? '';
+          // FR-08: Strip terminal input-injection sequences from raw LLM text only.
+          // The renderer's own OSC links and ANSI formatting are produced below
+          // and are never passed through this sanitization step.
+          const raw = sanitizeForTerminal(chunk.text ?? '');
           const display = textFilter ? textFilter.write(raw) : raw;
           if (display && this.mdWriter) this.mdWriter.write(display);
           fullText += raw; // raw kept for parser

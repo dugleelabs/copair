@@ -46,16 +46,16 @@ describe('KnowledgeManager', () => {
   });
 
   describe('injectIntoSystemPrompt', () => {
-    it('wraps content in <knowledge> tags', () => {
+    it('wraps content in <knowledge source="user"> tags', () => {
       const result = manager.injectIntoSystemPrompt('## Directory Map\n- src/');
-      expect(result).toContain('<knowledge>');
+      expect(result).toContain('<knowledge source="user">');
       expect(result).toContain('</knowledge>');
       expect(result).toContain('## Directory Map');
     });
 
     it('trims leading/trailing whitespace from content', () => {
       const result = manager.injectIntoSystemPrompt('  content  ');
-      expect(result).toContain('<knowledge>\ncontent\n</knowledge>');
+      expect(result).toContain('<knowledge source="user">\ncontent\n</knowledge>');
     });
   });
 

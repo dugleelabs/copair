@@ -1,8 +1,15 @@
 import { globSync } from 'glob';
 import { resolve } from 'node:path';
+import { z } from 'zod';
 import type { Tool } from './interface.js';
 
+export const GlobInputSchema = z.object({
+  pattern: z.string().min(1),
+  path: z.string().min(1).optional(),
+}).strict();
+
 export const globTool: Tool = {
+  inputSchema: GlobInputSchema,
   definition: {
     name: 'glob',
     description: 'Find files matching a glob pattern',

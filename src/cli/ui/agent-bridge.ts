@@ -45,6 +45,8 @@ export interface ApprovalRequest {
   index: number;
   total: number;
   diff?: DiffInfo;
+  /** Present when a bash command references a sensitive system path. */
+  warning?: string;
 }
 
 // ── Typed event map ─────────────────────────────────────────────────────────

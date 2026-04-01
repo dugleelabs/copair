@@ -16,11 +16,20 @@ export const ProviderConfigSchema = z.object({
     .enum(['anthropic', 'openai', 'google', 'openai-compatible'])
     .optional(),
   models: z.record(z.string(), ModelConfigSchema),
+  /** Provider API call timeout in ms. Populated by config loader from network.provider_timeout_ms. */
+  timeout_ms: z.number().int().positive().optional(),
 });
 
 export const PermissionsConfigSchema = z.object({
   mode: z.enum(['ask', 'auto-approve', 'deny']).default('ask'),
   allow_commands: z.array(z.string()).default([]),
+  /** Glob patterns of paths outside the project root the agent may request access to. */
+  allow_paths: z.array(z.string()).default([]),
+  /**
+   * Glob patterns unconditionally denied regardless of approval mode. When non-empty,
+   * replaces the built-in deny list entirely. Leave empty to use built-in defaults.
+   */
+  deny_paths: z.array(z.string()).default([]),
 });
 
 export const FeatureFlagsSchema = z.object({
@@ -32,6 +41,13 @@ export const McpServerConfigSchema = z.object({
   command: z.string(),
   args: z.array(z.string()).default([]),
   env: z.record(z.string(), z.string()).optional(),
+  /** Per-server tool call timeout in ms. Overrides the global default of 30s. */
+  timeout_ms: z.number().int().positive().optional(),
+  /**
+   * When true, inherit the full process.env rather than the minimal safe set.
+   * Default: false (principle of least privilege — FR-13).
+   */
+  inherit_env: z.boolean().optional(),
 });
 
 export const WebSearchConfigSchema = z.object({
@@ -67,11 +83,25 @@ export const UIConfigSchema = z.object({
   tab_completion: z.boolean().default(true),
 });
 
+export const SecurityConfigSchema = z.object({
+  /** 'strict' denies all out-of-project paths; 'warn' allows but logs (testing only). */
+  path_validation: z.enum(['strict', 'warn']).default('strict'),
+  /** When true, also redact high-entropy base64-like strings from logs and tool output. */
+  redact_high_entropy: z.boolean().default(false),
+});
+
+export const NetworkConfigSchema = z.object({
+  /** Timeout for web search HTTP calls in milliseconds. */
+  web_search_timeout_ms: z.number().int().positive().default(15_000),
+  /** Timeout for provider API calls in milliseconds. */
+  provider_timeout_ms: z.number().int().positive().default(120_000),
+});
+
 export const CopairConfigSchema = z.object({
   version: z.number().int().positive(),
   default_model: z.string().optional(),
   providers: z.record(z.string(), ProviderConfigSchema).default({}),
-  permissions: PermissionsConfigSchema.default({ mode: 'ask', allow_commands: [] }),
+  permissions: PermissionsConfigSchema.default(() => PermissionsConfigSchema.parse({})),
   feature_flags: FeatureFlagsSchema.default({ model_routing: false }),
   mcp_servers: z.array(McpServerConfigSchema).default([]),
   web_search: WebSearchConfigSchema.optional(),
@@ -79,6 +109,8 @@ export const CopairConfigSchema = z.object({
   context: ContextConfigSchema.default(() => ContextConfigSchema.parse({})),
   knowledge: KnowledgeConfigSchema.default(() => KnowledgeConfigSchema.parse({})),
   ui: UIConfigSchema.default(() => UIConfigSchema.parse({})),
+  security: SecurityConfigSchema.optional(),
+  network: NetworkConfigSchema.optional(),
 });
 
 export type CopairConfig = z.infer<typeof CopairConfigSchema>;
@@ -88,3 +120,5 @@ export type IdentityConfig = z.infer<typeof IdentityConfigSchema>;
 export type ContextConfig = z.infer<typeof ContextConfigSchema>;
 export type KnowledgeConfig = z.infer<typeof KnowledgeConfigSchema>;
 export type UIConfig = z.infer<typeof UIConfigSchema>;
+export type SecurityConfig = z.infer<typeof SecurityConfigSchema>;
+export type NetworkConfig = z.infer<typeof NetworkConfigSchema>;

@@ -38,6 +38,9 @@ import { GitignoreManager } from './init/GitignoreManager.js';
 import { KnowledgeManager } from './knowledge/KnowledgeManager.js';
 import { KnowledgeSetupFlow } from './knowledge/KnowledgeSetupFlow.js';
 import { isCI } from './utils/environmentUtils.js';
+import { logger, LogLevel } from './core/logger.js';
+import { AuditLog } from './core/audit-log.js';
+import { runAuditCommand } from './cli/commands/audit.js';
 
 function resolveModel(
   config: CopairConfig,
@@ -61,9 +64,14 @@ function resolveModel(
   );
 }
 
-function resolveProviderConfig(config: ProviderConfig): ProviderConfig {
-  if (!config.api_key) return config;
-  return { ...config, api_key: resolveEnvVarString(config.api_key) };
+function resolveProviderConfig(config: ProviderConfig, timeoutMs?: number): ProviderConfig {
+  const resolved = config.api_key
+    ? { ...config, api_key: resolveEnvVarString(config.api_key) }
+    : { ...config };
+  if (timeoutMs !== undefined && resolved.timeout_ms === undefined) {
+    resolved.timeout_ms = timeoutMs;
+  }
+  return resolved;
 }
 
 function getProviderType(
@@ -103,6 +111,13 @@ async function resumeSession(
 
 async function main() {
   const cliOpts = parseArgs();
+
+  if (cliOpts.debug) {
+    logger.setLevel(LogLevel.DEBUG);
+  } else if (cliOpts.verbose) {
+    logger.setLevel(LogLevel.INFO);
+  }
+
   checkForUpdates(); // non-blocking background check
 
   const ci = isCI();
@@ -140,7 +155,7 @@ async function main() {
   providerRegistry.register('openai-compatible', createOpenAICompatibleProvider);
 
   const providerType = getProviderType(providerName, providerConfig);
-  const provider = providerRegistry.resolve(providerType, resolveProviderConfig(providerConfig), modelAlias);
+  const provider = providerRegistry.resolve(providerType, resolveProviderConfig(providerConfig, config.network?.provider_timeout_ms), modelAlias);
 
   // Set up tools
   const toolRegistry = createDefaultToolRegistry(config);
@@ -184,6 +199,7 @@ async function main() {
   if (knowledgeResult.found && knowledgeResult.content) {
     knowledgeManager.checkSizeBudget(knowledgeResult.sizeBytes);
     knowledgePrefix = knowledgeManager.injectIntoSystemPrompt(knowledgeResult.content);
+    logger.debug('knowledge', `Loaded COPAIR_KNOWLEDGE.md (${knowledgeResult.sizeBytes} bytes)`);
   } else if (!ci) {
     const setupFlow = new KnowledgeSetupFlow();
     const written = await setupFlow.run(cwd);
@@ -282,6 +298,13 @@ async function main() {
     await SessionManager.cleanup(sessionsDir, config.context.max_sessions);
   }
 
+  // ── Audit log setup (P1) ──────────────────────────────────────────────────
+  const auditLog = new AuditLog(sessionManager.getSessionDir());
+  executor.setAuditLog(auditLog);
+  gate.setAuditLog(auditLog);
+  mcpManager.setAuditLog(auditLog);
+  await auditLog.append({ event: 'session_start', outcome: 'allowed', detail: modelAlias });
+
   let identifierDerived = sessionResumed;
 
   // Wire session manager into /session command
@@ -360,6 +383,7 @@ async function main() {
       summarizer = new SessionSummarizer(provider, resolved.model);
     }
 
+    await auditLog.append({ event: 'session_end', outcome: 'allowed' });
     await sessionManager.close(messages, summarizer);
     await mcpManager.shutdown();
     appHandle?.unmount();
@@ -485,7 +509,15 @@ async function main() {
   await appHandle.waitForExit().then(doExit);
 }
 
-main().catch((err) => {
-  console.error(`Error: ${(err as Error).message}`);
-  process.exit(1);
-});
+// ── Subcommand dispatch (before main REPL) ────────────────────────────────────
+if (process.argv[2] === 'audit') {
+  runAuditCommand(process.argv.slice(3)).catch((err) => {
+    process.stderr.write(`audit: ${(err as Error).message}\n`);
+    process.exit(1);
+  });
+} else {
+  main().catch((err) => {
+    console.error(`Error: ${(err as Error).message}`);
+    process.exit(1);
+  });
+}

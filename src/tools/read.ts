@@ -1,7 +1,15 @@
 import { readFileSync, existsSync } from 'node:fs';
+import { z } from 'zod';
 import type { Tool } from './interface.js';
 
+export const ReadInputSchema = z.object({
+  file_path: z.string().min(1),
+  offset: z.number().int().nonnegative().optional(),
+  limit: z.number().int().positive().optional(),
+}).strict();
+
 export const readTool: Tool = {
+  inputSchema: ReadInputSchema,
   definition: {
     name: 'read',
     description: 'Read the contents of a file',

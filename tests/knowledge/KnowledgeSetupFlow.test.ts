@@ -3,26 +3,19 @@ import { mkdirSync, readFileSync, rmSync } from 'node:fs';
 import { join } from 'node:path';
 import { tmpdir } from 'node:os';
 
-// We mock readline at the module level so KnowledgeSetupFlow uses our controlled input
-vi.mock('node:readline', () => {
-  return {
-    createInterface: vi.fn(),
-  };
-});
+// Mock tty-prompt before KnowledgeSetupFlow is imported.
+// KnowledgeSetupFlow uses ttyPrompt (for confirm) and readFromTty (for ask).
+vi.mock('../../src/cli/tty-prompt.js', () => ({
+  ttyPrompt: vi.fn(),
+  readFromTty: vi.fn(),
+}));
 
-import * as readline from 'node:readline';
+import * as ttyPromptModule from '../../src/cli/tty-prompt.js';
 import { KnowledgeSetupFlow } from '../../src/knowledge/KnowledgeSetupFlow.js';
 import { KB_FILENAME } from '../../src/knowledge/KnowledgeManager.js';
 
-function makeRlMock(answers: string[]) {
-  let callCount = 0;
-  return {
-    question: vi.fn((_q: string, cb: (a: string) => void) => {
-      cb(answers[callCount++] ?? '');
-    }),
-    close: vi.fn(),
-  };
-}
+// SECTIONS order: directory-map, tech-stack, naming-conventions (skippable),
+// entry-points, off-limits (skippable)
 
 describe('KnowledgeSetupFlow', () => {
   let tmpDir: string;
@@ -34,6 +27,8 @@ describe('KnowledgeSetupFlow', () => {
     mkdirSync(tmpDir, { recursive: true });
     flow = new KnowledgeSetupFlow();
     stdoutSpy = vi.spyOn(process.stdout, 'write').mockImplementation(() => true);
+    vi.mocked(ttyPromptModule.ttyPrompt).mockReset();
+    vi.mocked(ttyPromptModule.readFromTty).mockReset();
   });
 
   afterEach(() => {
@@ -42,20 +37,26 @@ describe('KnowledgeSetupFlow', () => {
   });
 
   it('returns false immediately when user declines initial prompt', async () => {
-    const rl = makeRlMock(['n']);
-    vi.mocked(readline.createInterface).mockReturnValue(rl as unknown as readline.Interface);
+    vi.mocked(ttyPromptModule.ttyPrompt).mockReturnValueOnce('n');
 
     const result = await flow.run(tmpDir);
 
     expect(result).toBe(false);
-    // No file should be written
     expect(() => readFileSync(join(tmpDir, KB_FILENAME))).toThrow();
   });
 
   it('writes file and returns true when user provides all sections and confirms', async () => {
-    // Answers: initial Y, dir map, tech stack, skip naming, entry points, skip off-limits, final Y
-    const rl = makeRlMock(['Y', 'src/ — source', 'TypeScript', 'skip', 'bin/copair.ts', 'skip', 'Y']);
-    vi.mocked(readline.createInterface).mockReturnValue(rl as unknown as readline.Interface);
+    // confirm calls: initial 'Y', final 'Y'
+    vi.mocked(ttyPromptModule.ttyPrompt)
+      .mockReturnValueOnce('Y')
+      .mockReturnValueOnce('Y');
+    // ask (readFromTty) calls: directory-map, tech-stack, naming-conventions, entry-points, off-limits
+    vi.mocked(ttyPromptModule.readFromTty)
+      .mockReturnValueOnce('src/ — source')
+      .mockReturnValueOnce('TypeScript')
+      .mockReturnValueOnce('skip')
+      .mockReturnValueOnce('bin/copair.ts')
+      .mockReturnValueOnce('skip');
 
     const result = await flow.run(tmpDir);
 
@@ -74,8 +75,15 @@ describe('KnowledgeSetupFlow', () => {
   });
 
   it('returns false and writes no file when user declines final write prompt', async () => {
-    const rl = makeRlMock(['Y', 'src/ — source', 'TypeScript', 'skip', 'bin/copair.ts', 'skip', 'n']);
-    vi.mocked(readline.createInterface).mockReturnValue(rl as unknown as readline.Interface);
+    vi.mocked(ttyPromptModule.ttyPrompt)
+      .mockReturnValueOnce('Y')
+      .mockReturnValueOnce('n');
+    vi.mocked(ttyPromptModule.readFromTty)
+      .mockReturnValueOnce('src/ — source')
+      .mockReturnValueOnce('TypeScript')
+      .mockReturnValueOnce('skip')
+      .mockReturnValueOnce('bin/copair.ts')
+      .mockReturnValueOnce('skip');
 
     const result = await flow.run(tmpDir);
 
@@ -84,9 +92,14 @@ describe('KnowledgeSetupFlow', () => {
   });
 
   it('returns false and skips file when all sections are empty', async () => {
-    // Provide empty answers for required sections, skip skippable ones
-    const rl = makeRlMock(['Y', '', '', 'skip', '', 'skip']);
-    vi.mocked(readline.createInterface).mockReturnValue(rl as unknown as readline.Interface);
+    // Only initial confirm — no final confirm reached since all sections empty
+    vi.mocked(ttyPromptModule.ttyPrompt).mockReturnValueOnce('Y');
+    vi.mocked(ttyPromptModule.readFromTty)
+      .mockReturnValueOnce('')    // directory-map: empty
+      .mockReturnValueOnce('')    // tech-stack: empty
+      .mockReturnValueOnce('skip') // naming-conventions: skipped
+      .mockReturnValueOnce('')    // entry-points: empty
+      .mockReturnValueOnce('skip'); // off-limits: skipped
 
     const result = await flow.run(tmpDir);
 
@@ -95,8 +108,15 @@ describe('KnowledgeSetupFlow', () => {
   });
 
   it('prefixes plain lines with a dash in the written file', async () => {
-    const rl = makeRlMock(['Y', 'my-dir', 'Node.js', 'skip', 'index.ts', 'skip', 'Y']);
-    vi.mocked(readline.createInterface).mockReturnValue(rl as unknown as readline.Interface);
+    vi.mocked(ttyPromptModule.ttyPrompt)
+      .mockReturnValueOnce('Y')
+      .mockReturnValueOnce('Y');
+    vi.mocked(ttyPromptModule.readFromTty)
+      .mockReturnValueOnce('my-dir')
+      .mockReturnValueOnce('Node.js')
+      .mockReturnValueOnce('skip')
+      .mockReturnValueOnce('index.ts')
+      .mockReturnValueOnce('skip');
 
     await flow.run(tmpDir);
 
@@ -107,8 +127,15 @@ describe('KnowledgeSetupFlow', () => {
   });
 
   it('does not double-prefix lines that already start with a dash', async () => {
-    const rl = makeRlMock(['Y', '- src/', 'TypeScript', 'skip', '- bin/', 'skip', 'Y']);
-    vi.mocked(readline.createInterface).mockReturnValue(rl as unknown as readline.Interface);
+    vi.mocked(ttyPromptModule.ttyPrompt)
+      .mockReturnValueOnce('Y')
+      .mockReturnValueOnce('Y');
+    vi.mocked(ttyPromptModule.readFromTty)
+      .mockReturnValueOnce('- src/')
+      .mockReturnValueOnce('TypeScript')
+      .mockReturnValueOnce('skip')
+      .mockReturnValueOnce('- bin/')
+      .mockReturnValueOnce('skip');
 
     await flow.run(tmpDir);
 

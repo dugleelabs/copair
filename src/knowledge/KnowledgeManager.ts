@@ -1,6 +1,7 @@
 import { existsSync, readFileSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
-import * as readline from 'node:readline';
+import { ttyPrompt } from '../cli/tty-prompt.js';
+import { wrapKnowledge } from '../core/context-wrapper.js';
 
 export const KB_FILENAME = 'COPAIR_KNOWLEDGE.md';
 
@@ -33,18 +34,6 @@ const SKIP_PATTERNS = [
   /\.spec\.[jt]sx?$/,
 ];
 
-function promptUser(question: string): Promise<string> {
-  const rl = readline.createInterface({
-    input: process.stdin,
-    output: process.stdout,
-  });
-  return new Promise((resolve) => {
-    rl.question(question, (answer) => {
-      rl.close();
-      resolve(answer.trim().toLowerCase());
-    });
-  });
-}
 
 export class KnowledgeManager {
   private config: KnowledgeConfig;
@@ -69,7 +58,7 @@ export class KnowledgeManager {
   }
 
   injectIntoSystemPrompt(content: string): string {
-    return `<knowledge>\n${content.trim()}\n</knowledge>\n\n`;
+    return wrapKnowledge(content.trim(), 'user') + '\n\n';
   }
 
   checkSizeBudget(sizeBytes: number): void {
@@ -119,19 +108,19 @@ export class KnowledgeManager {
     );
   }
 
-  async proposeUpdate(cwd: string, proposedDiff: string): Promise<boolean> {
+  proposeUpdate(cwd: string, proposedDiff: string): boolean {
     process.stdout.write(
       '\n[knowledge] Proposed update to COPAIR_KNOWLEDGE.md:\n\n' +
         proposedDiff +
         '\n',
     );
 
-    const answer = await promptUser('Apply this update to COPAIR_KNOWLEDGE.md? (Y/n) ');
-    const declined = answer === 'n' || answer === 'no';
+    const answer = ttyPrompt('Apply this update to COPAIR_KNOWLEDGE.md? (Y/n) ') ?? '';
+    const declined = answer.trim().toLowerCase() === 'n' || answer.trim().toLowerCase() === 'no';
 
     if (declined) return false;
 
-    await this.applyUpdate(cwd, proposedDiff);
+    this.applyUpdate(cwd, proposedDiff);
     return true;
   }
 

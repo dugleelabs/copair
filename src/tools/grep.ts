@@ -1,7 +1,16 @@
 import { execSync } from 'node:child_process';
+import { z } from 'zod';
 import type { Tool } from './interface.js';
 
+export const GrepInputSchema = z.object({
+  pattern: z.string().min(1),
+  path: z.string().min(1).optional(),
+  glob: z.string().min(1).optional(),
+  max_results: z.number().int().positive().optional(),
+}).strict();
+
 export const grepTool: Tool = {
+  inputSchema: GrepInputSchema,
   definition: {
     name: 'grep',
     description: 'Search for a regex pattern in files',

@@ -1,3 +1,4 @@
+import { z } from 'zod';
 import type { Tool } from './interface.js';
 import { KnowledgeBase } from '../core/knowledge-base.js';
 
@@ -7,7 +8,12 @@ export function setKnowledgeBase(kb: KnowledgeBase): void {
   knowledgeBaseInstance = kb;
 }
 
+export const UpdateKnowledgeInputSchema = z.object({
+  entry: z.string().min(1),
+}).strict();
+
 export const updateKnowledgeTool: Tool = {
+  inputSchema: UpdateKnowledgeInputSchema,
   definition: {
     name: 'update_knowledge',
     description:

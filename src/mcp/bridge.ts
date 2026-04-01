@@ -1,4 +1,3 @@
-import type { Client } from '@modelcontextprotocol/sdk/client/index.js';
 import type { Tool, ToolResult } from '../tools/interface.js';
 import type { ToolRegistry } from '../tools/registry.js';
 import type { McpClientManager } from './client.js';
@@ -15,7 +14,7 @@ export class McpBridge {
     }
   }
 
-  private async registerServer(serverName: string, client: Client): Promise<void> {
+  private async registerServer(serverName: string, client: { listTools(): Promise<{ tools: Array<{ name: string; description?: string; inputSchema?: unknown }> }> }): Promise<void> {
     const response = await client.listTools();
     const tools: Tool[] = response.tools.map((mcpTool) => {
       const tool: Tool = {
@@ -30,8 +29,8 @@ export class McpBridge {
         requiresPermission: true,
         execute: async (input: Record<string, unknown>): Promise<ToolResult> => {
           try {
-            const result = await client.callTool({ name: mcpTool.name, arguments: input });
-            const content = (result.content as Array<{ type: string; text?: string }>)
+            const result = await this.manager.callTool(serverName, mcpTool.name, input);
+            const content = result.content
               .map((block) =>
                 block.type === 'text' ? (block.text ?? '') : JSON.stringify(block),
               )

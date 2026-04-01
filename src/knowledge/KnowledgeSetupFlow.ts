@@ -1,6 +1,7 @@
 import { writeFileSync } from 'node:fs';
 import { join } from 'node:path';
-import * as readline from 'node:readline';
+import { ttyPrompt, readFromTty } from '../cli/tty-prompt.js';
+import { logger } from '../core/logger.js';
 import { KB_FILENAME } from './KnowledgeManager.js';
 
 interface Section {
@@ -53,32 +54,16 @@ const SECTIONS: Section[] = [
   },
 ];
 
-function createRl(): readline.Interface {
-  return readline.createInterface({
-    input: process.stdin,
-    output: process.stdout,
-  });
+function ask(question: string): string | null {
+  process.stdout.write(question + '\n> ');
+  return readFromTty();
 }
 
-async function ask(question: string): Promise<string> {
-  const rl = createRl();
-  return new Promise((resolve) => {
-    rl.question(question + '\n> ', (answer) => {
-      rl.close();
-      resolve(answer.trim());
-    });
-  });
-}
-
-async function confirm(question: string): Promise<boolean> {
-  const rl = createRl();
-  return new Promise((resolve) => {
-    rl.question(question, (answer) => {
-      rl.close();
-      const lower = answer.trim().toLowerCase();
-      resolve(lower !== 'n' && lower !== 'no');
-    });
-  });
+function confirm(question: string): boolean | null {
+  const answer = ttyPrompt(question);
+  if (answer === null) return null;
+  const lower = answer.trim().toLowerCase();
+  return lower !== 'n' && lower !== 'no';
 }
 
 export class KnowledgeSetupFlow {
@@ -87,9 +72,11 @@ export class KnowledgeSetupFlow {
    * Returns true if a file was written, false if the user declined.
    */
   async run(cwd: string): Promise<boolean> {
-    const shouldSetup = await confirm(
-      'No knowledge file found. Set one up now? (Y/n) ',
-    );
+    const shouldSetup = confirm('No knowledge file found. Set one up now? (Y/n) ');
+    if (shouldSetup === null) {
+      logger.info('knowledge', 'TTY unavailable — skipping knowledge setup');
+      return false;
+    }
     if (!shouldSetup) return false;
 
     process.stdout.write(
@@ -101,7 +88,12 @@ export class KnowledgeSetupFlow {
 
     for (const section of SECTIONS) {
       process.stdout.write(`--- ${section.heading.replace('## ', '')} ---\n`);
-      const answer = await ask(section.question);
+      const answer = ask(section.question);
+
+      if (answer === null) {
+        logger.info('knowledge', 'TTY unavailable mid-setup — aborting');
+        return false;
+      }
 
       if (section.skippable && answer.toLowerCase() === 'skip') {
         process.stdout.write('Skipped.\n\n');
@@ -140,7 +132,11 @@ export class KnowledgeSetupFlow {
     process.stdout.write(fileContent);
     process.stdout.write('\n--- End of draft ---\n\n');
 
-    const write = await confirm('Write COPAIR_KNOWLEDGE.md? (Y/n) ');
+    const write = confirm('Write COPAIR_KNOWLEDGE.md? (Y/n) ');
+    if (write === null) {
+      logger.info('knowledge', 'TTY unavailable — skipping write');
+      return false;
+    }
     if (!write) {
       process.stdout.write('Skipped — will prompt again next session start.\n');
       return false;

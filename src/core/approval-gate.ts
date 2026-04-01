@@ -2,6 +2,9 @@ import { resolve as resolvePath } from 'node:path';
 import chalk from 'chalk';
 import type { AllowList } from './allow-list.js';
 import type { AgentBridge, ApprovalAnswer } from '../cli/ui/agent-bridge.js';
+import { readFromTty } from '../cli/tty-prompt.js';
+import { logger } from './logger.js';
+import type { AuditLog } from './audit-log.js';
 
 export type RiskLevel = 'safe' | 'needs-approval' | 'always-ask';
 export type GateMode = 'ask' | 'auto-approve' | 'deny';
@@ -12,7 +15,7 @@ export type GateMode = 'ask' | 'auto-approve' | 'deny';
  * escalate agent permissions by writing these files through the trusted-path
  * shortcut.
  */
-const PERMISSION_SENSITIVE_FILES = ['config.yaml', 'allow.yaml'];
+const PERMISSION_SENSITIVE_FILES = ['config.yaml', 'allow.yaml', 'audit.jsonl'];
 
 /**
  * Static risk classification table.
@@ -62,6 +65,7 @@ export class ApprovalGate {
   private trustedPaths = new Set<string>();
   // Optional bridge for ink-based approval UI
   private bridge: AgentBridge | null = null;
+  private auditLog: AuditLog | null = null;
   // Pending approval context for bridge-based flow
   private pendingIndex = 0;
   private pendingTotal = 0;
@@ -74,6 +78,10 @@ export class ApprovalGate {
   /** Set the bridge for ink-based approval prompts. */
   setBridge(bridge: AgentBridge): void {
     this.bridge = bridge;
+  }
+
+  setAuditLog(log: AuditLog): void {
+    this.auditLog = log;
   }
 
   /** Set context for batch approval counting. */
@@ -124,20 +132,38 @@ export class ApprovalGate {
   async allow(toolName: string, input: Record<string, unknown>): Promise<boolean> {
     // Trusted paths bypass even deny mode — scaffolding writes must always work
     if (this.isTrustedPath(toolName, input)) return true;
-    if (this.mode === 'deny') return false;
+
+    if (this.mode === 'deny') {
+      void this.auditLog?.append({ event: 'denial', tool: toolName, outcome: 'denied', detail: 'deny mode' });
+      return false;
+    }
+
     const risk = this.classify(toolName, input);
     if (risk === 'safe') return true;
+
     // 'always-ask' bypasses auto-approve — these tools always require human confirmation
-    if (this.mode === 'auto-approve' && risk !== 'always-ask') return true;
+    if (this.mode === 'auto-approve' && risk !== 'always-ask') {
+      void this.auditLog?.append({ event: 'approval', tool: toolName, approved_by: 'auto', outcome: 'allowed' });
+      return true;
+    }
 
     // File-based allow list — pre-approved operations bypass the prompt
-    if (this.allowList?.matches(toolName, input)) return true;
+    if (this.allowList?.matches(toolName, input)) {
+      void this.auditLog?.append({ event: 'approval', tool: toolName, approved_by: 'allow_list', outcome: 'allowed' });
+      return true;
+    }
 
     const key = sessionKey(toolName, input);
-    if (this.alwaysAllow.has(key)) return true;
+    if (this.alwaysAllow.has(key)) {
+      void this.auditLog?.append({ event: 'approval', tool: toolName, approved_by: 'user', outcome: 'allowed' });
+      return true;
+    }
 
     // Bridge-based approval (ink UI): approve-all-for-turn check
-    if (this.bridge?.approveAllForTurn) return true;
+    if (this.bridge?.approveAllForTurn) {
+      void this.auditLog?.append({ event: 'approval', tool: toolName, approved_by: 'user', outcome: 'allowed' });
+      return true;
+    }
 
     const defaultAllow = risk === 'always-ask';
 
@@ -146,8 +172,8 @@ export class ApprovalGate {
       return this.bridgePrompt(toolName, input, key);
     }
 
-    // Legacy fallback: direct stdin prompt
-    return this.legacyPrompt(toolName, input, key, defaultAllow);
+    // Legacy fallback: /dev/tty prompt (synchronous, not stdin)
+    return Promise.resolve(this.legacyPrompt(toolName, input, key, defaultAllow));
   }
 
   /** Bridge-based approval: emit event and await response from ink UI. */
@@ -158,6 +184,9 @@ export class ApprovalGate {
   ): Promise<boolean> {
     return new Promise((resolve) => {
       const summary = formatSummary(toolName, input);
+      const warning = typeof input._sensitivePathWarning === 'string'
+        ? input._sensitivePathWarning
+        : undefined;
 
       this.bridge!.emit('approval-request', {
         toolName,
@@ -165,28 +194,34 @@ export class ApprovalGate {
         summary,
         index: this.pendingIndex,
         total: this.pendingTotal,
+        warning,
       }, (answer: ApprovalAnswer) => {
         switch (answer) {
           case 'allow':
+            void this.auditLog?.append({ event: 'approval', tool: toolName, approved_by: 'user', outcome: 'allowed' });
             resolve(true);
             break;
           case 'always':
             this.alwaysAllow.add(key);
+            void this.auditLog?.append({ event: 'approval', tool: toolName, approved_by: 'user', outcome: 'allowed', detail: 'always' });
             resolve(true);
             break;
           case 'all':
             this.bridge!.approveAllForTurn = true;
+            void this.auditLog?.append({ event: 'approval', tool: toolName, approved_by: 'user', outcome: 'allowed', detail: 'approve-all' });
             resolve(true);
             break;
           case 'similar': {
             // Extract directory-level key for similar operations
             const similarKey = similarSessionKey(toolName, input);
             this.alwaysAllow.add(similarKey);
+            void this.auditLog?.append({ event: 'approval', tool: toolName, approved_by: 'user', outcome: 'allowed', detail: 'similar' });
             resolve(true);
             break;
           }
           case 'deny':
           default:
+            void this.auditLog?.append({ event: 'denial', tool: toolName, outcome: 'denied', detail: 'user denied' });
             resolve(false);
             break;
         }
@@ -194,18 +229,28 @@ export class ApprovalGate {
     });
   }
 
-  /** Legacy approval prompt: direct stdin (kept for backward compatibility).
+  /** Legacy approval prompt: reads from /dev/tty directly (not stdin).
    *
    * @param defaultAllow  When true (used for `always-ask` tools like web_search),
    *   pressing Enter without typing confirms the action.  For all other tools the
    *   safe default is to deny on empty input.
    */
-  private async legacyPrompt(
+  private legacyPrompt(
     toolName: string,
     input: Record<string, unknown>,
     key: string,
     defaultAllow = false,
-  ): Promise<boolean> {
+  ): boolean {
+    const warning = typeof input._sensitivePathWarning === 'string'
+      ? input._sensitivePathWarning
+      : undefined;
+
+    if (warning) {
+      process.stdout.write(
+        chalk.red(`\n  \u26A0  WARNING: This command accesses a sensitive system path outside the project root (${warning})\n`),
+      );
+    }
+
     const summary = formatSummary(toolName, input);
     const boxWidth = Math.max(summary.length + 6, 56);
     const topBar = '\u2500'.repeat(boxWidth);
@@ -221,9 +266,11 @@ export class ApprovalGate {
       `  ${allowLabel} allow   ${chalk.cyan('[a]')} always   ${chalk.red('[n]')} deny  ${chalk.yellow('\u203A')} `,
     );
 
-    const answer = await ask();
+    const answer = readFromTty();
     if (answer === null) {
-      process.stdout.write(chalk.red('\n  \u2717 Denied (interrupted).\n\n'));
+      logger.info('approval', 'TTY unavailable — treating as CI mode (deny)');
+      process.stdout.write(chalk.red('\n  \u2717 Denied (CI mode — no TTY).\n\n'));
+      void this.auditLog?.append({ event: 'denial', tool: toolName, outcome: 'denied', detail: 'CI mode — no TTY' });
       return false;
     }
 
@@ -232,16 +279,19 @@ export class ApprovalGate {
     if (trimmed === 'a' || trimmed === 'always') {
       this.alwaysAllow.add(key);
       process.stdout.write(chalk.green('  \u2713 Always allowed.\n\n'));
+      void this.auditLog?.append({ event: 'approval', tool: toolName, approved_by: 'user', outcome: 'allowed', detail: 'always' });
       return true;
     }
 
     if (trimmed === 'y' || trimmed === 'yes' || (trimmed === '' && defaultAllow)) {
       process.stdout.write(chalk.green('  \u2713 Allowed.\n\n'));
+      void this.auditLog?.append({ event: 'approval', tool: toolName, approved_by: 'user', outcome: 'allowed' });
       return true;
     }
 
     // Empty Enter on non-defaultAllow tools, or explicit 'n'/'no' → deny
     process.stdout.write(chalk.red('  \u2717 Denied.\n\n'));
+    void this.auditLog?.append({ event: 'denial', tool: toolName, outcome: 'denied', detail: 'user denied' });
     return false;
   }
 }
@@ -296,54 +346,3 @@ export function formatSummary(toolName: string, input: Record<string, unknown>):
   return raw.replace(/\n/g, ' ').replace(/\s+/g, ' ').trim();
 }
 
-/**
- * Read one line from stdin for the legacy approval prompt.
- *
- * Reads raw bytes directly from process.stdin instead of creating a
- * second readline interface. Creating another readline on the same stdin
- * that the REPL owns causes the REPL's readline to receive spurious
- * `close` events when the approval readline is destroyed, which kills
- * the entire process.
- */
-function ask(): Promise<string | null> {
-  return new Promise((resolve) => {
-    let resolved = false;
-    let buf = '';
-
-    const done = (value: string | null) => {
-      if (resolved) return;
-      resolved = true;
-      process.stdin.removeListener('data', onData);
-      process.stdin.removeListener('end', onEnd);
-      if (wasRaw !== undefined) process.stdin.setRawMode(wasRaw);
-      resolve(value);
-    };
-
-    const onData = (chunk: Buffer) => {
-      const str = chunk.toString();
-      for (const ch of str) {
-        if (ch === '\x03') { process.stdout.write('\n'); done(null); return; }
-        if (ch === '\x04') { process.stdout.write('\n'); done(null); return; }
-        if (ch === '\r' || ch === '\n') { process.stdout.write('\n'); done(buf); return; }
-        if (ch === '\x7f' || ch === '\b') {
-          if (buf.length > 0) { buf = buf.slice(0, -1); process.stdout.write('\b \b'); }
-          continue;
-        }
-        buf += ch;
-        process.stdout.write(ch);
-      }
-    };
-
-    const onEnd = () => done(null);
-
-    let wasRaw: boolean | undefined;
-    if (typeof process.stdin.setRawMode === 'function') {
-      wasRaw = process.stdin.isRaw;
-      process.stdin.setRawMode(true);
-    }
-
-    process.stdin.on('data', onData);
-    process.stdin.on('end', onEnd);
-    process.stdin.resume();
-  });
-}

@@ -1,6 +1,11 @@
+import { z } from 'zod';
 import type { Tool, ToolResult } from './interface.js';
 import type { CopairConfig } from '../config/schema.js';
 import { logger } from '../core/logger.js';
+
+export const WebSearchInputSchema = z.object({
+  query: z.string().min(1),
+}).strict();
 
 interface SearchResult {
   title: string;
@@ -13,6 +18,7 @@ async function searchTavily(
   query: string,
   apiKey: string,
   maxResults: number,
+  signal: AbortSignal,
 ): Promise<SearchResult[]> {
   const response = await fetch('https://api.tavily.com/search', {
     method: 'POST',
@@ -21,6 +27,7 @@ async function searchTavily(
       Authorization: `Bearer ${apiKey}`,
     },
     body: JSON.stringify({ query, max_results: maxResults }),
+    signal,
   });
 
   if (!response.ok) {
@@ -42,6 +49,7 @@ async function searchSerper(
   query: string,
   apiKey: string,
   maxResults: number,
+  signal: AbortSignal,
 ): Promise<SearchResult[]> {
   const response = await fetch('https://google.serper.dev/search', {
     method: 'POST',
@@ -50,6 +58,7 @@ async function searchSerper(
       'X-API-KEY': apiKey,
     },
     body: JSON.stringify({ q: query, num: maxResults }),
+    signal,
   });
 
   if (!response.ok) {
@@ -71,12 +80,13 @@ async function searchSearxng(
   query: string,
   baseUrl: string,
   maxResults: number,
+  signal: AbortSignal,
 ): Promise<SearchResult[]> {
   const url = new URL('/search', baseUrl);
   url.searchParams.set('q', query);
   url.searchParams.set('format', 'json');
 
-  const response = await fetch(url.toString());
+  const response = await fetch(url.toString(), { signal });
   if (!response.ok) {
     if (response.status === 403) {
       throw new Error(
@@ -102,8 +112,10 @@ export function createWebSearchTool(config: CopairConfig): Tool | null {
   if (!webSearchConfig) return null;
 
   const maxResults = webSearchConfig.max_results;
+  const timeoutMs = config.network?.web_search_timeout_ms ?? 15_000;
 
   return {
+    inputSchema: WebSearchInputSchema,
     definition: {
       name: 'web_search',
       description:
@@ -129,19 +141,21 @@ export function createWebSearchTool(config: CopairConfig): Tool | null {
       logger.info('web_search', `Agent web search via ${webSearchConfig.provider}: "${query}"`);
 
       try {
+        const signal = AbortSignal.timeout(timeoutMs);
         let results: SearchResult[];
         switch (webSearchConfig.provider) {
           case 'tavily':
-            results = await searchTavily(query, webSearchConfig.api_key ?? '', maxResults);
+            results = await searchTavily(query, webSearchConfig.api_key ?? '', maxResults, signal);
             break;
           case 'serper':
-            results = await searchSerper(query, webSearchConfig.api_key ?? '', maxResults);
+            results = await searchSerper(query, webSearchConfig.api_key ?? '', maxResults, signal);
             break;
           case 'searxng':
             results = await searchSearxng(
               query,
               webSearchConfig.base_url ?? 'http://localhost:8080',
               maxResults,
+              signal,
             );
             break;
           default:

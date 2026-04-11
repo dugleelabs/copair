@@ -78,6 +78,19 @@ describe('CopairConfigSchema', () => {
     expect(result.web_search?.provider).toBe('tavily');
   });
 
+  it('defaults plugins to empty array', () => {
+    const result = CopairConfigSchema.parse({ version: 1 });
+    expect(result.plugins).toEqual([]);
+  });
+
+  it('validates config with plugins array', () => {
+    const result = CopairConfigSchema.parse({
+      version: 1,
+      plugins: ['./test-plugin.js', '@dugleelabs/copair-pro-plugin'],
+    });
+    expect(result.plugins).toEqual(['./test-plugin.js', '@dugleelabs/copair-pro-plugin']);
+  });
+
   it('rejects invalid provider type', () => {
     expect(() =>
       CopairConfigSchema.parse({

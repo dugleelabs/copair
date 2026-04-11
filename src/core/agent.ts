@@ -12,6 +12,7 @@ import type { ToolCallFormatter } from './formats/interface.js';
 import type { FormatName } from './formats/index.js';
 import { resolveFormatter, buildStreamingFilter, StreamingMarkupFilter } from './formats/index.js';
 import type { AgentBridge } from '../cli/ui/agent-bridge.js';
+import type { PluginManager } from './plugin-manager.js';
 
 export interface AgentOptions {
   systemPrompt?: string;
@@ -19,6 +20,7 @@ export interface AgentOptions {
   temperature?: number;
   toolCallFormat?: FormatName;
   bridge?: AgentBridge;
+  pluginManager?: PluginManager;
 }
 
 export class Agent {
@@ -32,6 +34,7 @@ export class Agent {
   private _model: string;
   private formatter: ToolCallFormatter;
   private textFilter: StreamingMarkupFilter;
+  private pluginManager?: PluginManager;
 
   constructor(
     provider: Provider,
@@ -50,6 +53,7 @@ export class Agent {
     this.options = options;
     this.formatter = resolveFormatter(provider.name, model, options.toolCallFormat);
     this.textFilter = buildStreamingFilter(this.formatter);
+    this.pluginManager = options.pluginManager;
   }
 
   get model(): string {
@@ -115,6 +119,8 @@ export class Agent {
 
     let totalUsage: { inputTokens: number; outputTokens: number } | null = null;
     let lastInputTokens = 0;
+    // Plugin metadata — survives across hooks within the same turn
+    const meta: Record<string, unknown> = {};
     // When true, the agent web search tool failed on the previous loop iteration.
     // On the next iteration, inject the provider's native search marker so the
     // model can fall back to the provider's built-in search capability.
@@ -164,10 +170,37 @@ export class Agent {
 
       logger.debug('agent', `System prompt (${systemPrompt?.length ?? 0} chars): preamble=${systemPrompt?.includes('CONTEXT DATA') ?? false} knowledge=${systemPrompt?.includes('<knowledge') ?? false}`);
 
-      const stream = this.provider.chat(messages, tools, {
+      // ── Plugin hooks: preRequest + provider intercept ──
+      let activeProvider = this.provider;
+      let activeMessages = messages;
+      let activeTools = tools;
+      let activeSystemPrompt = systemPrompt;
+
+      if (this.pluginManager) {
+        const preEvent = await this.pluginManager.preRequest({
+          messages,
+          tools,
+          systemPrompt: systemPrompt ?? '',
+          provider: this.provider,
+          model: this._model,
+          meta,
+        });
+        activeMessages = preEvent.messages;
+        activeTools = preEvent.tools;
+        activeSystemPrompt = preEvent.systemPrompt || undefined;
+
+        activeProvider = this.pluginManager.interceptProvider({
+          currentProvider: this.provider,
+          model: this._model,
+          messages: activeMessages,
+          tokenCount: 0,
+        });
+      }
+
+      const stream = activeProvider.chat(activeMessages, activeTools, {
         model: this._model,
         stream: true,
-        systemPrompt,
+        systemPrompt: activeSystemPrompt,
         maxTokens: this.options.maxTokens,
         temperature: this.options.temperature,
       });
@@ -216,6 +249,25 @@ export class Agent {
               outputTokens: totalUsage.outputTokens + usage.outputTokens,
             }
           : { ...usage };
+      }
+
+      // ── Plugin hook: postRequest (observation only) ──
+      if (this.pluginManager) {
+        await this.pluginManager.postRequest({
+          messages: activeMessages,
+          response: {
+            text: cleanedText ?? '',
+            toolCalls: toolCalls.map((tc) => ({
+              id: tc.id,
+              name: tc.name,
+              input: JSON.parse(tc.arguments || '{}') as Record<string, unknown>,
+            })),
+            usage: usage ?? null,
+          },
+          provider: activeProvider,
+          model: this._model,
+          meta,
+        });
       }
 
       if (toolCalls.length === 0) {

@@ -198,6 +198,55 @@ web_search:
 
 → [Web search docs](docs/web-search.md)
 
+## Installation
+
+**npm** (requires Node.js 20+):
+
+```
+npm install -g @dugleelabs/copair
+```
+
+**Homebrew** (macOS/Linux):
+
+```
+brew install dugleelabs/tap/copair
+```
+
+**Standalone binary** (no Node.js required):
+
+Download the latest SEA binary for your platform from [GitHub Releases](https://github.com/dugleelabs/copair/releases):
+
+- `copair-darwin-arm64` (macOS Apple Silicon)
+- `copair-darwin-x64` (macOS Intel)
+- `copair-linux-x64` (Linux x64)
+
+```bash
+chmod +x copair-darwin-arm64
+mv copair-darwin-arm64 /usr/local/bin/copair
+```
+
+## Extending Copair
+
+Copair includes a plugin system for extending its behavior. Plugins can intercept and modify LLM requests, observe responses, and override provider routing. The plugin API is used internally and is not yet publicly documented.
+
+```yaml
+# config.yaml
+plugins:
+  - "./my-plugin.js"
+  - "@scope/my-plugin-package"
+```
+
+**Copair Pro** is a commercial edition built on top of the open-source core, offering additional features for teams and enterprises.
+
+## Programmatic API
+
+Copair exports a library API for building on top of the core:
+
+```typescript
+import { bootstrapCLI, PluginManager } from '@dugleelabs/copair';
+import type { CopairPlugin } from '@dugleelabs/copair';
+```
+
 ## License
 
 MIT

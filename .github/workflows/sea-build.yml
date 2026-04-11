@@ -1,0 +1,41 @@
+name: Build SEA Binaries
+
+on:
+  release:
+    types: [published]
+
+jobs:
+  build-sea:
+    strategy:
+      matrix:
+        include:
+          - os: macos-latest
+            platform: darwin
+            arch: arm64
+          - os: macos-13
+            platform: darwin
+            arch: x64
+          - os: ubuntu-latest
+            platform: linux
+            arch: x64
+
+    runs-on: ${{ matrix.os }}
+
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+      - uses: pnpm/action-setup@v4
+
+      - run: pnpm install --frozen-lockfile
+      - run: pnpm lint && pnpm test && pnpm build
+      - run: bash scripts/build-sea.sh
+
+      - name: Upload binary
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          mv copair "copair-${{ matrix.platform }}-${{ matrix.arch }}"
+          gh release upload "${{ github.event.release.tag_name }}" \
+            "./copair-${{ matrix.platform }}-${{ matrix.arch }}" --clobber

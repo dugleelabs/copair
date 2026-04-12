@@ -55,10 +55,72 @@ jobs:
           Rename-Item copair.exe "copair-${{ matrix.platform }}-${{ matrix.arch }}.exe"
           gh release upload "${{ github.event.release.tag_name }}" "copair-${{ matrix.platform }}-${{ matrix.arch }}.exe" --clobber
 
-  # ── Update Homebrew formula after all binaries are uploaded ──────
+  # ── Validate uploaded binaries on each platform ─────────────────
+  validate-binaries:
+    name: Validate ${{ matrix.platform }}-${{ matrix.arch }}
+    needs: build-sea
+    strategy:
+      matrix:
+        include:
+          - os: macos-latest
+            platform: darwin
+            arch: arm64
+            binary: copair-darwin-arm64
+          - os: macos-13
+            platform: darwin
+            arch: x64
+            binary: copair-darwin-x64
+          - os: ubuntu-latest
+            platform: linux
+            arch: x64
+            binary: copair-linux-x64
+          - os: windows-latest
+            platform: win32
+            arch: x64
+            binary: copair-win32-x64.exe
+
+    runs-on: ${{ matrix.os }}
+
+    steps:
+      - name: Download binary from release
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          gh release download "${{ github.event.release.tag_name }}" \
+            --repo dugleelabs/copair \
+            --pattern "${{ matrix.binary }}"
+
+      - name: Validate binary (unix)
+        if: matrix.platform != 'win32'
+        run: |
+          chmod +x "${{ matrix.binary }}"
+          TAG="${{ github.event.release.tag_name }}"
+          VERSION="${TAG#v}"
+
+          OUTPUT=$(./${{ matrix.binary }} --version)
+          echo "Expected: ${VERSION}, Got: ${OUTPUT}"
+          [ "$OUTPUT" = "$VERSION" ] || { echo "Version mismatch"; exit 1; }
+
+          ./${{ matrix.binary }} --help > /dev/null
+          echo "${{ matrix.binary }}: OK"
+
+      - name: Validate binary (windows)
+        if: matrix.platform == 'win32'
+        run: |
+          $TAG = "${{ github.event.release.tag_name }}"
+          $VERSION = $TAG -replace '^v', ''
+
+          $OUTPUT = .\${{ matrix.binary }} --version
+          Write-Host "Expected: $VERSION, Got: $OUTPUT"
+          if ($OUTPUT -ne $VERSION) { Write-Error "Version mismatch"; exit 1 }
+
+          .\${{ matrix.binary }} --help | Out-Null
+          Write-Host "${{ matrix.binary }}: OK"
+
+  # ── Update Homebrew formula after binaries are validated ─────────
   update-homebrew:
     name: Update Homebrew formula
-    needs: build-sea
+    needs: validate-binaries
     runs-on: ubuntu-latest
     steps:
       - name: Download binaries and compute SHA256
@@ -67,10 +129,11 @@ jobs:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
           TAG="${{ github.event.release.tag_name }}"
-          BASE="https://github.com/dugleelabs/copair/releases/download/${TAG}"
 
           for BINARY in copair-darwin-arm64 copair-darwin-x64 copair-linux-x64; do
-            curl -sL "${BASE}/${BINARY}" -o "${BINARY}"
+            gh release download "${TAG}" \
+              --repo dugleelabs/copair \
+              --pattern "${BINARY}"
             SHA=$(sha256sum "${BINARY}" | awk '{print $1}')
             # copair-darwin-arm64 -> darwin_arm64
             KEY=$(echo "${BINARY}" | sed 's/copair-//' | tr '-' '_')

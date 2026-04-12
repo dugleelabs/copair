@@ -142,7 +142,7 @@ export class McpClientManager {
     });
 
     const client = new Client(
-      { name: 'copair', version: '0.1.0' },
+      { name: 'copair', version: process.env['COPAIR_VERSION'] ?? '0.0.0-dev' },
       { capabilities: {} },
     );
 

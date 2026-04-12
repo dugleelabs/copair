@@ -56,7 +56,7 @@ const _pkg = (() => {
   for (const rel of ['../package.json', '../../package.json']) {
     try { return _require(resolve(_dir, rel)); } catch { /* skip */ }
   }
-  return { version: '0.0.0' };
+  return { version: process.env['COPAIR_VERSION'] ?? '0.0.0-dev' };
 })();
 
 export function getVersionString(options: BootstrapOptions = {}): string {

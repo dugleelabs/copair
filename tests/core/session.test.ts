@@ -25,6 +25,7 @@ describe('atomicWrite', () => {
   });
 
   it('sets 0o600 permissions', async () => {
+    if (process.platform === 'win32') return; // Windows does not support Unix file modes
     const filePath = join(tmpDir, 'secure.json');
     await atomicWrite(filePath, 'secret');
     const mode = statSync(filePath).mode & 0o777;
@@ -61,8 +62,7 @@ describe('resolveSessionsDir', () => {
     // Use a dir with no .copair and no git
     const emptyDir = mkdtempSync(join(tmpdir(), 'copair-empty-'));
     const result = resolveSessionsDir(emptyDir);
-    const home = process.env['HOME'] ?? '~';
-    expect(result).toContain('.copair/sessions');
+    expect(result).toContain(join('.copair', 'sessions'));
     // Cleanup
     rm(emptyDir, { recursive: true, force: true });
   });
@@ -249,9 +249,11 @@ describe('SessionManager', () => {
       }),
     );
 
-    // Override HOME for migration
+    // Override HOME for migration (USERPROFILE needed on Windows for os.homedir())
     const origHome = process.env['HOME'];
+    const origUserProfile = process.env['USERPROFILE'];
     process.env['HOME'] = fakeHome;
+    process.env['USERPROFILE'] = fakeHome;
     try {
       const meta = await SessionManager.migrateGlobalRecovery(sessionsDir, tmpDir);
       expect(meta).not.toBeNull();
@@ -260,6 +262,7 @@ describe('SessionManager', () => {
       expect(existsSync(join(recoveryDir, 'recovery.json'))).toBe(false);
     } finally {
       process.env['HOME'] = origHome;
+      process.env['USERPROFILE'] = origUserProfile;
       await rm(fakeHome, { recursive: true, force: true });
     }
   });

@@ -1,6 +1,6 @@
 import { describe, it, expect, beforeEach, afterEach } from 'vitest';
 import { mkdirSync, mkdtempSync, writeFileSync, symlinkSync, rmSync, existsSync, realpathSync } from 'node:fs';
-import { join, resolve } from 'node:path';
+import { join, resolve, sep } from 'node:path';
 import { tmpdir, homedir } from 'node:os';
 import { execSync } from 'node:child_process';
 import { PathGuard, BUILTIN_DENY, expandHome } from '../../src/core/path-guard.js';
@@ -9,7 +9,8 @@ import { PathGuard, BUILTIN_DENY, expandHome } from '../../src/core/path-guard.j
  * Creates a temp dir with a .git/ folder so git rev-parse sees it as a repo root.
  */
 function makeTempGitRepo(): string {
-  const dir = mkdtempSync(join(tmpdir(), 'copair-pathguard-'));
+  // realpathSync resolves Windows 8.3 short names (e.g. RUNNER~1 → runneradmin)
+  const dir = realpathSync(mkdtempSync(join(tmpdir(), 'copair-pathguard-')));
   execSync('git init -q', { cwd: dir });
   return dir;
 }
@@ -18,7 +19,7 @@ function makeTempGitRepo(): string {
  * Creates a temp dir with NO git repo.
  */
 function makeTempDir(): string {
-  return mkdtempSync(join(tmpdir(), 'copair-pathguard-'));
+  return realpathSync(mkdtempSync(join(tmpdir(), 'copair-pathguard-')));
 }
 
 describe('PathGuard', () => {
@@ -151,7 +152,7 @@ describe('PathGuard', () => {
 
 describe('expandHome', () => {
   it('expands ~/path to homedir/path', () => {
-    expect(expandHome('~/.ssh/id_rsa')).toBe(join(homedir(), '.ssh/id_rsa'));
+    expect(expandHome('~/.ssh/id_rsa')).toBe(join(homedir(), '.ssh', 'id_rsa'));
   });
 
   it('expands bare ~ to homedir', () => {
@@ -183,9 +184,9 @@ describe('PathGuard with PathPolicy', () => {
   let outsideDir: string;
 
   beforeEach(() => {
-    projectRoot = mkdtempSync(join(tmpdir(), 'copair-pathguard-policy-'));
+    projectRoot = realpathSync(mkdtempSync(join(tmpdir(), 'copair-pathguard-policy-')));
     execSync('git init -q', { cwd: projectRoot });
-    outsideDir = mkdtempSync(join(tmpdir(), 'copair-outside-'));
+    outsideDir = realpathSync(mkdtempSync(join(tmpdir(), 'copair-outside-')));
   });
 
   afterEach(() => {

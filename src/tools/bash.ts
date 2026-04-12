@@ -58,7 +58,7 @@ export const bashTool: Tool = {
         encoding: 'utf-8',
         maxBuffer: 5 * 1024 * 1024,
         timeout,
-        shell: '/bin/bash',
+        shell: process.platform === 'win32' ? true : '/bin/bash',
       });
       return { content: result };
     } catch (err) {

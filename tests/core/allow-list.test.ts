@@ -96,6 +96,7 @@ describe('loadAllowList', () => {
     mkdirSync(globalCopairDir, { recursive: true });
     mkdirSync(join(projectDir, '.copair'), { recursive: true });
     vi.stubEnv('HOME', join(tmp, 'home'));
+    vi.stubEnv('USERPROFILE', join(tmp, 'home'));
   });
 
   afterEach(() => {

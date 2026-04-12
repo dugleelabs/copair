@@ -33,13 +33,14 @@ import type { ToolRegistry } from '../../src/tools/registry.js';
 // ── Helpers ───────────────────────────────────────────────────────────────────
 
 function makeTempGitRepo(): string {
-  const dir = mkdtempSync(join(tmpdir(), 'copair-p1-'));
+  // realpathSync resolves Windows 8.3 short names (e.g. RUNNER~1 → runneradmin)
+  const dir = realpathSync(mkdtempSync(join(tmpdir(), 'copair-p1-')));
   execSync('git init -q', { cwd: dir });
   return dir;
 }
 
 function makeSessionDir(): string {
-  return mkdtempSync(join(tmpdir(), 'copair-p1-session-'));
+  return realpathSync(mkdtempSync(join(tmpdir(), 'copair-p1-session-')));
 }
 
 function makeRegistry(tool: Tool): ToolRegistry {
@@ -78,7 +79,7 @@ describe('PathGuard P1 — allow_paths integration', () => {
 
   beforeEach(() => {
     projectRoot = makeTempGitRepo();
-    outsideDir = mkdtempSync(join(tmpdir(), 'copair-p1-outside-'));
+    outsideDir = realpathSync(mkdtempSync(join(tmpdir(), 'copair-p1-outside-')));
   });
 
   afterEach(() => {
@@ -101,7 +102,7 @@ describe('PathGuard P1 — allow_paths integration', () => {
   });
 
   it('denies an unconfigured path outside project root even when allow_paths is set', () => {
-    const otherDir = mkdtempSync(join(tmpdir(), 'copair-p1-other-'));
+    const otherDir = realpathSync(mkdtempSync(join(tmpdir(), 'copair-p1-other-')));
     const targetFile = join(otherDir, 'unlisted.ts');
     writeFileSync(targetFile, '');
     const realOutside = realpathSync(outsideDir);
@@ -126,7 +127,7 @@ describe('PathGuard P1 — deny_paths overrides built-in deny list', () => {
 
   beforeEach(() => {
     projectRoot = makeTempGitRepo();
-    outsideDir = mkdtempSync(join(tmpdir(), 'copair-p1-custom-deny-'));
+    outsideDir = realpathSync(mkdtempSync(join(tmpdir(), 'copair-p1-custom-deny-')));
   });
 
   afterEach(() => {

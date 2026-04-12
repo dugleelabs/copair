@@ -104,6 +104,7 @@ export const CopairConfigSchema = z.object({
   permissions: PermissionsConfigSchema.default(() => PermissionsConfigSchema.parse({})),
   feature_flags: FeatureFlagsSchema.default({ model_routing: false }),
   mcp_servers: z.array(McpServerConfigSchema).default([]),
+  plugins: z.array(z.string()).optional().default([]),
   web_search: WebSearchConfigSchema.optional(),
   identity: IdentityConfigSchema.default({ name: 'Copair', email: 'copair[bot]@noreply.dugleelabs.io' }),
   context: ContextConfigSchema.default(() => ContextConfigSchema.parse({})),

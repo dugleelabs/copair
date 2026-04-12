@@ -18,24 +18,37 @@ jobs:
           - os: ubuntu-latest
             platform: linux
             arch: x64
+          - os: windows-latest
+            platform: win32
+            arch: x64
 
     runs-on: ${{ matrix.os }}
 
     steps:
       - uses: actions/checkout@v4
+      - uses: pnpm/action-setup@v4
       - uses: actions/setup-node@v4
         with:
           node-version: '22'
-      - uses: pnpm/action-setup@v4
+          cache: pnpm
 
       - run: pnpm install --frozen-lockfile
-      - run: pnpm lint && pnpm test && pnpm build
-      - run: bash scripts/build-sea.sh
+      - run: pnpm test
+      - run: pnpm build:sea
 
-      - name: Upload binary
+      - name: Upload binary (unix)
+        if: matrix.platform != 'win32'
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
           mv copair "copair-${{ matrix.platform }}-${{ matrix.arch }}"
           gh release upload "${{ github.event.release.tag_name }}" \
             "./copair-${{ matrix.platform }}-${{ matrix.arch }}" --clobber
+
+      - name: Upload binary (windows)
+        if: matrix.platform == 'win32'
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          Rename-Item copair.exe "copair-${{ matrix.platform }}-${{ matrix.arch }}.exe"
+          gh release upload "${{ github.event.release.tag_name }}" "copair-${{ matrix.platform }}-${{ matrix.arch }}.exe" --clobber

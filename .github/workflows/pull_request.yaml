@@ -48,3 +48,37 @@ jobs:
       - run: pnpm exec tsc --noEmit
       - run: pnpm build
       - run: pnpm test
+
+  sea-smoke-test:
+    name: SEA Smoke Test (${{ matrix.os }})
+    strategy:
+      matrix:
+        os: [ubuntu-latest, windows-latest]
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: pnpm/action-setup@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: pnpm
+      - run: pnpm install --frozen-lockfile
+      - run: pnpm build:sea
+
+      - name: Verify SEA binary (unix)
+        if: runner.os != 'Windows'
+        run: |
+          VERSION=$(node -p "require('./package.json').version")
+          OUTPUT=$(./copair --version)
+          echo "Expected: ${VERSION}, Got: ${OUTPUT}"
+          [ "$OUTPUT" = "$VERSION" ] || { echo "Version mismatch"; exit 1; }
+          ./copair --help > /dev/null
+
+      - name: Verify SEA binary (windows)
+        if: runner.os == 'Windows'
+        run: |
+          $VERSION = node -p "require('./package.json').version"
+          $OUTPUT = .\copair.exe --version
+          Write-Host "Expected: $VERSION, Got: $OUTPUT"
+          if ($OUTPUT -ne $VERSION) { Write-Error "Version mismatch"; exit 1 }
+          .\copair.exe --help | Out-Null

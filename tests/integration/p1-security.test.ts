@@ -15,7 +15,7 @@ import {
   realpathSync,
   existsSync,
 } from 'node:fs';
-import { join } from 'node:path';
+import { join, resolve } from 'node:path';
 import { tmpdir, homedir } from 'node:os';
 import { execSync } from 'node:child_process';
 import { z } from 'zod';
@@ -33,10 +33,11 @@ import type { ToolRegistry } from '../../src/tools/registry.js';
 // ── Helpers ───────────────────────────────────────────────────────────────────
 
 function makeTempGitRepo(): string {
-  // realpathSync resolves Windows 8.3 short names (e.g. RUNNER~1 → runneradmin)
-  const dir = realpathSync(mkdtempSync(join(tmpdir(), 'copair-p1-')));
+  const dir = mkdtempSync(join(tmpdir(), 'copair-p1-'));
   execSync('git init -q', { cwd: dir });
-  return dir;
+  // Use the same resolution as PathGuard.findProjectRoot so test paths
+  // match PathGuard's internal projectRoot (resolves Windows 8.3 short names).
+  return resolve(execSync('git rev-parse --show-toplevel', { cwd: dir, encoding: 'utf8' }).trim());
 }
 
 function makeSessionDir(): string {

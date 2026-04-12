@@ -9,10 +9,13 @@ import { PathGuard, BUILTIN_DENY, expandHome } from '../../src/core/path-guard.j
  * Creates a temp dir with a .git/ folder so git rev-parse sees it as a repo root.
  */
 function makeTempGitRepo(): string {
-  // realpathSync resolves Windows 8.3 short names (e.g. RUNNER~1 → runneradmin)
-  const dir = realpathSync(mkdtempSync(join(tmpdir(), 'copair-pathguard-')));
+  const dir = mkdtempSync(join(tmpdir(), 'copair-pathguard-'));
   execSync('git init -q', { cwd: dir });
-  return dir;
+  // Use the same resolution as PathGuard.findProjectRoot so the test's
+  // projectRoot matches PathGuard's internal projectRoot on all platforms.
+  // On Windows, git returns long names (runneradmin) while tmpdir() may
+  // return 8.3 short names (RUNNER~1) that realpathSync doesn't resolve.
+  return resolve(execSync('git rev-parse --show-toplevel', { cwd: dir, encoding: 'utf8' }).trim());
 }
 
 /**
@@ -133,8 +136,8 @@ describe('PathGuard', () => {
 
   it('findProjectRoot returns git root when inside a git repo', () => {
     const found = PathGuard.findProjectRoot(projectRoot);
-    // Use realpathSync to handle macOS /var → /private/var symlinks
-    expect(realpathSync(found)).toBe(realpathSync(projectRoot));
+    // Both use resolve(git rev-parse output) so they should match directly
+    expect(found).toBe(projectRoot);
   });
 
   it('findProjectRoot falls back to cwd when not in a git repo', () => {
@@ -184,8 +187,9 @@ describe('PathGuard with PathPolicy', () => {
   let outsideDir: string;
 
   beforeEach(() => {
-    projectRoot = realpathSync(mkdtempSync(join(tmpdir(), 'copair-pathguard-policy-')));
-    execSync('git init -q', { cwd: projectRoot });
+    const raw = mkdtempSync(join(tmpdir(), 'copair-pathguard-policy-'));
+    execSync('git init -q', { cwd: raw });
+    projectRoot = resolve(execSync('git rev-parse --show-toplevel', { cwd: raw, encoding: 'utf8' }).trim());
     outsideDir = realpathSync(mkdtempSync(join(tmpdir(), 'copair-outside-')));
   });
 

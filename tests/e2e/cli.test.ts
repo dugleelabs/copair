@@ -77,7 +77,7 @@ describe('missing config', () => {
 });
 
 describe('config with openai-compatible provider (no live API)', () => {
-  it('exits with a clear error when provider URL is unreachable', () => {
+  it('exits with a clear error when provider URL is unreachable', { timeout: 15000 }, () => {
     const tmpHome = mkdtempSync(join(tmpdir(), 'copair-e2e-home-'));
     const tmpProject = makeTempProject();
     try {
@@ -106,7 +106,7 @@ describe('config with openai-compatible provider (no live API)', () => {
       // Pipe a single message then EOF so copair tries to call the (unreachable) server
       const { status, stderr } = run([], {
         cwd: tmpProject,
-        env: { HOME: tmpHome },
+        env: { HOME: tmpHome, USERPROFILE: tmpHome },
         input: 'hello\n',
       });
 

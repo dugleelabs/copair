@@ -11,7 +11,7 @@ const pkg = (() => {
   for (const rel of ['../package.json', '../../package.json']) {
     try { return require(resolve(_dir, rel)); } catch { /* skip */ }
   }
-  return { name: 'copair', version: '0.1.0' };
+  return { name: 'copair', version: process.env['COPAIR_VERSION'] ?? '0.0.0-dev' };
 })();
 
 export interface CliOptions {

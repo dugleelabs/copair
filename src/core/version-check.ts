@@ -10,7 +10,7 @@ const pkg = (() => {
   for (const rel of ['../package.json', '../../package.json']) {
     try { return _require(resolve(_dir, rel)) as { name: string; version: string }; } catch { /* skip */ }
   }
-  return { name: 'copair', version: '0.1.0' };
+  return { name: 'copair', version: process.env['COPAIR_VERSION'] ?? '0.0.0-dev' };
 })();
 
 const CACHE_DIR = resolve(process.env['HOME'] ?? '~', '.copair');

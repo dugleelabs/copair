@@ -1,7 +1,7 @@
 import { writeFile, rename, appendFile, readFile, readdir, rm, mkdir, stat } from 'node:fs/promises';
 import { existsSync, mkdirSync } from 'node:fs';
 import { redact } from './redactor.js';
-import { join, resolve } from 'node:path';
+import { join } from 'node:path';
 import { homedir } from 'node:os';
 import { execSync } from 'node:child_process';
 import { randomUUID } from 'node:crypto';

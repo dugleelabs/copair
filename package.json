@@ -47,7 +47,7 @@
     "url": "https://github.com/dugleelabs/copair.git"
   },
   "engines": {
-    "node": ">=20.0.0"
+    "node": ">=22.0.0"
   },
   "pnpm": {
     "onlyBuiltDependencies": [

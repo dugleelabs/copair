@@ -37,7 +37,7 @@ writeFileSync('dist/react-devtools-stub.mjs', 'export default {};\n');
 //    Node 22 SEA runs the main entry as CJS, so we can't use this directly.
 //    Instead, sea-wrapper.js (CJS) extracts this from SEA assets and imports it.
 run([
-  'npx esbuild dist/index-no-shebang.js',
+  'pnpm exec esbuild dist/index-no-shebang.js',
   '--bundle',
   '--format=esm',
   '--platform=node',
@@ -69,7 +69,7 @@ if (platform === 'darwin') {
 
 // 9. Inject SEA blob
 const postjectArgs = [
-  `npx postject ${binaryName} NODE_SEA_BLOB sea-prep.blob`,
+  `pnpm exec postject ${binaryName} NODE_SEA_BLOB sea-prep.blob`,
   '--sentinel-fuse NODE_SEA_FUSE_fce680ab2cc467b6e072b8b5df1996b2',
 ];
 if (platform === 'darwin') {

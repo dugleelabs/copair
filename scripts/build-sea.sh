@@ -20,7 +20,7 @@ sed '1s|^#!/usr/bin/env node||' dist/index.js > dist/index-no-shebang.js
 # In SEA there are no node_modules, so external imports fail at parse time.
 echo 'export default {}' > dist/react-devtools-stub.mjs
 
-npx esbuild dist/index-no-shebang.js \
+pnpm exec esbuild dist/index-no-shebang.js \
   --bundle \
   --format=esm \
   --platform=node \
@@ -57,7 +57,7 @@ POSTJECT_ARGS=(
 if [[ "$PLATFORM" == "darwin" ]]; then
   POSTJECT_ARGS+=(--macho-segment-name NODE_SEA)
 fi
-npx postject "${POSTJECT_ARGS[@]}"
+pnpm exec postject "${POSTJECT_ARGS[@]}"
 
 # 9. Re-sign (macOS)
 if [[ "$PLATFORM" == "darwin" ]]; then

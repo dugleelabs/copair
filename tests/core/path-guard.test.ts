@@ -1,6 +1,6 @@
 import { describe, it, expect, beforeEach, afterEach } from 'vitest';
 import { mkdirSync, mkdtempSync, writeFileSync, symlinkSync, rmSync, existsSync, realpathSync } from 'node:fs';
-import { join, resolve, sep } from 'node:path';
+import { join, resolve, sep, dirname } from 'node:path';
 import { tmpdir, homedir } from 'node:os';
 import { execSync } from 'node:child_process';
 import { PathGuard, BUILTIN_DENY, expandHome } from '../../src/core/path-guard.js';
@@ -231,9 +231,10 @@ describe('PathGuard with PathPolicy', () => {
   it('allow_paths permits a configured path outside project root', () => {
     const allowedFile = join(outsideDir, 'shared.ts');
     writeFileSync(allowedFile, '');
-    // Use realpathSync so the pattern matches the resolved path on macOS
-    // where /var/folders → /private/var/folders via symlink.
-    const realOutsideDir = realpathSync(outsideDir);
+    // Resolve via the file (not dir) so Windows 8.3 short names are expanded
+    // — realpathSync on an existing file calls GetFinalPathNameByHandle which
+    // returns the long-name form; realpathSync on a directory may not.
+    const realOutsideDir = dirname(realpathSync(allowedFile));
 
     const guard = new PathGuard(projectRoot, 'strict', {
       allowPaths: [realOutsideDir + '/**'],
@@ -249,7 +250,7 @@ describe('PathGuard with PathPolicy', () => {
     // So ~/.aws/credentials is no longer blocked, but the custom pattern is.
     const targetFile = join(outsideDir, 'blocked.txt');
     writeFileSync(targetFile, '');
-    const realOutsideDir = realpathSync(outsideDir);
+    const realOutsideDir = dirname(realpathSync(targetFile));
 
     const guard = new PathGuard(projectRoot, 'strict', {
       allowPaths: [],
@@ -266,7 +267,7 @@ describe('PathGuard with PathPolicy', () => {
   it('deny_paths override takes precedence over allow_paths', () => {
     const targetFile = join(outsideDir, 'secret.txt');
     writeFileSync(targetFile, '');
-    const realOutsideDir = realpathSync(outsideDir);
+    const realOutsideDir = dirname(realpathSync(targetFile));
 
     // Both deny and allow match the path — deny wins.
     const guard = new PathGuard(projectRoot, 'strict', {

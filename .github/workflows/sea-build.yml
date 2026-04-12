@@ -12,9 +12,6 @@ jobs:
           - os: macos-latest
             platform: darwin
             arch: arm64
-          - os: macos-13
-            platform: darwin
-            arch: x64
           - os: ubuntu-latest
             platform: linux
             arch: x64
@@ -66,10 +63,6 @@ jobs:
             platform: darwin
             arch: arm64
             binary: copair-darwin-arm64
-          - os: macos-13
-            platform: darwin
-            arch: x64
-            binary: copair-darwin-x64
           - os: ubuntu-latest
             platform: linux
             arch: x64
@@ -130,7 +123,7 @@ jobs:
         run: |
           TAG="${{ github.event.release.tag_name }}"
 
-          for BINARY in copair-darwin-arm64 copair-darwin-x64 copair-linux-x64; do
+          for BINARY in copair-darwin-arm64 copair-linux-x64; do
             gh release download "${TAG}" \
               --repo dugleelabs/copair \
               --pattern "${BINARY}"
@@ -168,10 +161,6 @@ jobs:
               on_arm do
                 url "${BASE}/copair-darwin-arm64"
                 sha256 "${{ steps.sha.outputs.darwin_arm64 }}"
-              end
-              on_intel do
-                url "${BASE}/copair-darwin-x64"
-                sha256 "${{ steps.sha.outputs.darwin_x64 }}"
               end
             end
 

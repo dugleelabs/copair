@@ -76,16 +76,18 @@ jobs:
         if: runner.os != 'Windows'
         run: |
           VERSION=$(node -p "require('./package.json').version")
+          EXPECTED="copair ${VERSION} (community)"
           OUTPUT=$(./copair --version)
-          echo "Expected: ${VERSION}, Got: ${OUTPUT}"
-          [ "$OUTPUT" = "$VERSION" ] || { echo "Version mismatch"; exit 1; }
+          echo "Expected: ${EXPECTED}, Got: ${OUTPUT}"
+          [ "$OUTPUT" = "$EXPECTED" ] || { echo "Version mismatch"; exit 1; }
           ./copair --help > /dev/null
 
       - name: Verify SEA binary (windows)
         if: runner.os == 'Windows'
         run: |
           $VERSION = node -p "require('./package.json').version"
+          $EXPECTED = "copair $VERSION (community)"
           $OUTPUT = .\copair.exe --version
-          Write-Host "Expected: $VERSION, Got: $OUTPUT"
-          if ($OUTPUT -ne $VERSION) { Write-Error "Version mismatch"; exit 1 }
+          Write-Host "Expected: $EXPECTED, Got: $OUTPUT"
+          if ($OUTPUT -ne $EXPECTED) { Write-Error "Version mismatch"; exit 1 }
           .\copair.exe --help | Out-Null

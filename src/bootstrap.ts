@@ -433,7 +433,7 @@ export async function bootstrapCLI(options: BootstrapOptions = {}): Promise<void
   completionEngine.addProvider(new FilePathProvider(cwd));
 
   // Banner is printed before ink takes over — ink will manage the terminal from here
-  printBanner(modelAlias);
+  printBanner(modelAlias, versionString);
   // Small delay to let banner render before ink clears the screen
   await new Promise((r) => setTimeout(r, 50));
 

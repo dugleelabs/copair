@@ -15,7 +15,7 @@ import {
   realpathSync,
   existsSync,
 } from 'node:fs';
-import { join } from 'node:path';
+import { join, resolve, dirname } from 'node:path';
 import { tmpdir, homedir } from 'node:os';
 import { execSync } from 'node:child_process';
 import { z } from 'zod';
@@ -35,11 +35,13 @@ import type { ToolRegistry } from '../../src/tools/registry.js';
 function makeTempGitRepo(): string {
   const dir = mkdtempSync(join(tmpdir(), 'copair-p1-'));
   execSync('git init -q', { cwd: dir });
-  return dir;
+  // Use the same resolution as PathGuard.findProjectRoot so test paths
+  // match PathGuard's internal projectRoot (resolves Windows 8.3 short names).
+  return resolve(execSync('git rev-parse --show-toplevel', { cwd: dir, encoding: 'utf8' }).trim());
 }
 
 function makeSessionDir(): string {
-  return mkdtempSync(join(tmpdir(), 'copair-p1-session-'));
+  return realpathSync(mkdtempSync(join(tmpdir(), 'copair-p1-session-')));
 }
 
 function makeRegistry(tool: Tool): ToolRegistry {
@@ -78,7 +80,7 @@ describe('PathGuard P1 — allow_paths integration', () => {
 
   beforeEach(() => {
     projectRoot = makeTempGitRepo();
-    outsideDir = mkdtempSync(join(tmpdir(), 'copair-p1-outside-'));
+    outsideDir = realpathSync(mkdtempSync(join(tmpdir(), 'copair-p1-outside-')));
   });
 
   afterEach(() => {
@@ -89,7 +91,8 @@ describe('PathGuard P1 — allow_paths integration', () => {
   it('allows a configured path outside project root via allow_paths', () => {
     const targetFile = join(outsideDir, 'shared.ts');
     writeFileSync(targetFile, '');
-    const realOutside = realpathSync(outsideDir);
+    // Resolve via file (not dir) so Windows 8.3 short names are expanded
+    const realOutside = dirname(realpathSync(targetFile));
 
     const guard = new PathGuard(projectRoot, 'strict', {
       allowPaths: [realOutside + '/**'],
@@ -104,7 +107,10 @@ describe('PathGuard P1 — allow_paths integration', () => {
     const otherDir = mkdtempSync(join(tmpdir(), 'copair-p1-other-'));
     const targetFile = join(otherDir, 'unlisted.ts');
     writeFileSync(targetFile, '');
-    const realOutside = realpathSync(outsideDir);
+    // Create a dummy file in outsideDir to resolve its real path via the file
+    const dummyFile = join(outsideDir, '.marker');
+    writeFileSync(dummyFile, '');
+    const realOutside = dirname(realpathSync(dummyFile));
 
     const guard = new PathGuard(projectRoot, 'strict', {
       allowPaths: [realOutside + '/**'],
@@ -126,7 +132,7 @@ describe('PathGuard P1 — deny_paths overrides built-in deny list', () => {
 
   beforeEach(() => {
     projectRoot = makeTempGitRepo();
-    outsideDir = mkdtempSync(join(tmpdir(), 'copair-p1-custom-deny-'));
+    outsideDir = realpathSync(mkdtempSync(join(tmpdir(), 'copair-p1-custom-deny-')));
   });
 
   afterEach(() => {
@@ -137,7 +143,7 @@ describe('PathGuard P1 — deny_paths overrides built-in deny list', () => {
   it('custom deny_paths blocks the custom pattern', () => {
     const blocked = join(outsideDir, 'blocked.txt');
     writeFileSync(blocked, '');
-    const realOutside = realpathSync(outsideDir);
+    const realOutside = dirname(realpathSync(blocked));
 
     const guard = new PathGuard(projectRoot, 'strict', {
       allowPaths: [],
@@ -157,7 +163,7 @@ describe('PathGuard P1 — deny_paths overrides built-in deny list', () => {
     // a custom deny pattern blocks correctly while the built-in is gone.
     const secret = join(outsideDir, 'secrets.env');
     writeFileSync(secret, '');
-    const realOutside = realpathSync(outsideDir);
+    const realOutside = dirname(realpathSync(secret));
 
     const guard = new PathGuard(projectRoot, 'strict', {
       allowPaths: [],

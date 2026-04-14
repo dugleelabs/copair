@@ -23,7 +23,7 @@
  */
 
 import { realpathSync, existsSync } from 'node:fs';
-import { resolve, dirname } from 'node:path';
+import { resolve, dirname, basename, sep } from 'node:path';
 import { homedir } from 'node:os';
 import { execSync } from 'node:child_process';
 import { minimatch } from 'minimatch';
@@ -70,7 +70,7 @@ export const BUILTIN_DENY: string[] = [
 /** Expand a leading `~/` or bare `~` to the OS home directory. */
 export function expandHome(pattern: string): string {
   if (pattern === '~') return homedir();
-  if (pattern.startsWith('~/')) return homedir() + pattern.slice(1);
+  if (pattern.startsWith('~/')) return resolve(homedir(), pattern.slice(2));
   return pattern;
 }
 
@@ -113,12 +113,11 @@ export class PathGuard {
         return { allowed: false, reason: 'parent-missing' };
       }
       const resolvedParent = realpathSync(parentRaw);
-      const filename = rawPath.split('/').at(-1)!;
-      resolved = resolve(resolvedParent, filename);
+      resolved = resolve(resolvedParent, basename(rawPath));
     }
 
     const inside =
-      resolved.startsWith(this.projectRoot + '/') || resolved === this.projectRoot;
+      resolved.startsWith(this.projectRoot + sep) || resolved === this.projectRoot;
 
     if (inside) {
       return { allowed: true, resolvedPath: resolved };
@@ -143,13 +142,13 @@ export class PathGuard {
 
   private isDenied(resolved: string): boolean {
     return this.expandedDenyPatterns.some(pattern =>
-      minimatch(resolved, pattern, { dot: true }),
+      minimatch(resolved, pattern, { dot: true, windowsPathsNoEscape: true }),
     );
   }
 
   private isAllowed(resolved: string): boolean {
     return this.expandedAllowPatterns.some(pattern =>
-      minimatch(resolved, pattern, { dot: true }),
+      minimatch(resolved, pattern, { dot: true, windowsPathsNoEscape: true }),
     );
   }
 
@@ -161,7 +160,7 @@ export class PathGuard {
    */
   static findProjectRoot(cwd: string): string {
     try {
-      return execSync('git rev-parse --show-toplevel', { cwd, encoding: 'utf8' }).trim();
+      return resolve(execSync('git rev-parse --show-toplevel', { cwd, encoding: 'utf8' }).trim());
     } catch {
       return cwd;
     }

@@ -15,6 +15,7 @@ describe('loadConfig', () => {
 
     // Override HOME so loadConfig looks in our test dir
     vi.stubEnv('HOME', join(testDir, 'home'));
+    vi.stubEnv('USERPROFILE', join(testDir, 'home'));
   });
 
   afterEach(() => {

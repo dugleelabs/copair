@@ -1,7 +1,8 @@
 import { writeFile, rename, appendFile, readFile, readdir, rm, mkdir, stat } from 'node:fs/promises';
 import { existsSync, mkdirSync } from 'node:fs';
 import { redact } from './redactor.js';
-import { join, resolve } from 'node:path';
+import { join } from 'node:path';
+import { homedir } from 'node:os';
 import { execSync } from 'node:child_process';
 import { randomUUID } from 'node:crypto';
 import { createInterface } from 'node:readline';
@@ -51,8 +52,7 @@ export function resolveSessionsDir(cwd: string): string {
   }
 
   // 3. Global fallback
-  const home = process.env['HOME'] ?? '~';
-  const dir = join(resolve(home), '.copair', 'sessions');
+  const dir = join(homedir(), '.copair', 'sessions');
   mkdirSync(dir, { recursive: true });
   return dir;
 }
@@ -391,8 +391,7 @@ export class SessionManager {
     sessionsDir: string,
     projectRoot: string,
   ): Promise<SessionMetadata | null> {
-    const home = process.env['HOME'] ?? '~';
-    const recoveryFile = join(resolve(home), '.copair', 'sessions', 'recovery.json');
+    const recoveryFile = join(homedir(), '.copair', 'sessions', 'recovery.json');
 
     if (!existsSync(recoveryFile)) return null;
 

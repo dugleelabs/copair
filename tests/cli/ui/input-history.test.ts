@@ -1,6 +1,6 @@
 import { describe, it, expect, afterEach } from 'vitest';
 import { mkdirSync, rmSync, existsSync, writeFileSync } from 'node:fs';
-import { join } from 'node:path';
+import { join, sep } from 'node:path';
 import { tmpdir } from 'node:os';
 import { resolveHistoryPath, loadHistory, saveHistory, appendHistory } from '../../../src/cli/ui/input-history.js';
 
@@ -22,7 +22,7 @@ describe('input-history', () => {
   it('resolveHistoryPath falls back to global', () => {
     mkdirSync(testDir, { recursive: true });
     const path = resolveHistoryPath(testDir);
-    expect(path).toContain('.copair/history');
+    expect(path).toContain(join('.copair', 'history'));
     expect(path).not.toContain(testDir);
   });
 

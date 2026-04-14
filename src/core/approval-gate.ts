@@ -1,4 +1,4 @@
-import { resolve as resolvePath } from 'node:path';
+import { resolve as resolvePath, sep } from 'node:path';
 import chalk from 'chalk';
 import type { AllowList } from './allow-list.js';
 import type { AgentBridge, ApprovalAnswer } from '../cli/ui/agent-bridge.js';
@@ -103,11 +103,11 @@ export class ApprovalGate {
     const abs = resolvePath(filePath);
     for (const trusted of this.trustedPaths) {
       // Exact match (e.g., .copair.yaml) or directory prefix (e.g., .copair/)
-      if (abs === trusted || abs.startsWith(trusted + '/')) {
+      if (abs === trusted || abs.startsWith(trusted + sep)) {
         // Permission-sensitive files are NEVER auto-trusted — even inside .copair/.
         // An agent (or injected prompt) must not be able to escalate its own
         // permissions by writing the allow-list or project config.
-        if (PERMISSION_SENSITIVE_FILES.some((name) => abs.endsWith('/' + name))) {
+        if (PERMISSION_SENSITIVE_FILES.some((name) => abs.endsWith(sep + name))) {
           return false;
         }
         return true;
@@ -321,7 +321,7 @@ function sessionKey(toolName: string, input: Record<string, unknown>): string {
 function similarSessionKey(toolName: string, input: Record<string, unknown>): string {
   const filePath = input.file_path ?? input.path;
   if (typeof filePath === 'string') {
-    const dir = filePath.replace(/\/[^/]*$/, '/');
+    const dir = filePath.replace(/[/\\][^/\\]*$/, sep);
     return `${toolName}:${dir}`;
   }
   return sessionKey(toolName, input);

@@ -50,6 +50,7 @@ describe('AuditLog', () => {
   });
 
   it('creates the file with mode 0o600', async () => {
+    if (process.platform === 'win32') return; // Windows does not support Unix file modes
     await log.append({ event: 'session_start', outcome: 'allowed' });
     const mode = statSync(log.getLogPath()).mode & 0o777;
     expect(mode).toBe(0o600);

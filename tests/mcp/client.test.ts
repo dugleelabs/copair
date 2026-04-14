@@ -137,6 +137,7 @@ describe('validateMcpServer', () => {
   });
 
   it('returns true for an absolute path that exists (e.g. /bin/sh)', async () => {
+    if (process.platform === 'win32') return; // /bin/sh does not exist on Windows
     const result = await validateMcpServer({
       name: 'sh-server',
       command: '/bin/sh',

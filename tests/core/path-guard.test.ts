@@ -1,6 +1,6 @@
 import { describe, it, expect, beforeEach, afterEach } from 'vitest';
 import { mkdirSync, mkdtempSync, writeFileSync, symlinkSync, rmSync, existsSync, realpathSync } from 'node:fs';
-import { join, resolve } from 'node:path';
+import { join, resolve, sep, dirname } from 'node:path';
 import { tmpdir, homedir } from 'node:os';
 import { execSync } from 'node:child_process';
 import { PathGuard, BUILTIN_DENY, expandHome } from '../../src/core/path-guard.js';
@@ -11,14 +11,18 @@ import { PathGuard, BUILTIN_DENY, expandHome } from '../../src/core/path-guard.j
 function makeTempGitRepo(): string {
   const dir = mkdtempSync(join(tmpdir(), 'copair-pathguard-'));
   execSync('git init -q', { cwd: dir });
-  return dir;
+  // Use the same resolution as PathGuard.findProjectRoot so the test's
+  // projectRoot matches PathGuard's internal projectRoot on all platforms.
+  // On Windows, git returns long names (runneradmin) while tmpdir() may
+  // return 8.3 short names (RUNNER~1) that realpathSync doesn't resolve.
+  return resolve(execSync('git rev-parse --show-toplevel', { cwd: dir, encoding: 'utf8' }).trim());
 }
 
 /**
  * Creates a temp dir with NO git repo.
  */
 function makeTempDir(): string {
-  return mkdtempSync(join(tmpdir(), 'copair-pathguard-'));
+  return realpathSync(mkdtempSync(join(tmpdir(), 'copair-pathguard-')));
 }
 
 describe('PathGuard', () => {
@@ -132,8 +136,8 @@ describe('PathGuard', () => {
 
   it('findProjectRoot returns git root when inside a git repo', () => {
     const found = PathGuard.findProjectRoot(projectRoot);
-    // Use realpathSync to handle macOS /var → /private/var symlinks
-    expect(realpathSync(found)).toBe(realpathSync(projectRoot));
+    // Both use resolve(git rev-parse output) so they should match directly
+    expect(found).toBe(projectRoot);
   });
 
   it('findProjectRoot falls back to cwd when not in a git repo', () => {
@@ -151,7 +155,7 @@ describe('PathGuard', () => {
 
 describe('expandHome', () => {
   it('expands ~/path to homedir/path', () => {
-    expect(expandHome('~/.ssh/id_rsa')).toBe(join(homedir(), '.ssh/id_rsa'));
+    expect(expandHome('~/.ssh/id_rsa')).toBe(join(homedir(), '.ssh', 'id_rsa'));
   });
 
   it('expands bare ~ to homedir', () => {
@@ -183,9 +187,10 @@ describe('PathGuard with PathPolicy', () => {
   let outsideDir: string;
 
   beforeEach(() => {
-    projectRoot = mkdtempSync(join(tmpdir(), 'copair-pathguard-policy-'));
-    execSync('git init -q', { cwd: projectRoot });
-    outsideDir = mkdtempSync(join(tmpdir(), 'copair-outside-'));
+    const raw = mkdtempSync(join(tmpdir(), 'copair-pathguard-policy-'));
+    execSync('git init -q', { cwd: raw });
+    projectRoot = resolve(execSync('git rev-parse --show-toplevel', { cwd: raw, encoding: 'utf8' }).trim());
+    outsideDir = realpathSync(mkdtempSync(join(tmpdir(), 'copair-outside-')));
   });
 
   afterEach(() => {
@@ -226,9 +231,10 @@ describe('PathGuard with PathPolicy', () => {
   it('allow_paths permits a configured path outside project root', () => {
     const allowedFile = join(outsideDir, 'shared.ts');
     writeFileSync(allowedFile, '');
-    // Use realpathSync so the pattern matches the resolved path on macOS
-    // where /var/folders → /private/var/folders via symlink.
-    const realOutsideDir = realpathSync(outsideDir);
+    // Resolve via the file (not dir) so Windows 8.3 short names are expanded
+    // — realpathSync on an existing file calls GetFinalPathNameByHandle which
+    // returns the long-name form; realpathSync on a directory may not.
+    const realOutsideDir = dirname(realpathSync(allowedFile));
 
     const guard = new PathGuard(projectRoot, 'strict', {
       allowPaths: [realOutsideDir + '/**'],
@@ -244,7 +250,7 @@ describe('PathGuard with PathPolicy', () => {
     // So ~/.aws/credentials is no longer blocked, but the custom pattern is.
     const targetFile = join(outsideDir, 'blocked.txt');
     writeFileSync(targetFile, '');
-    const realOutsideDir = realpathSync(outsideDir);
+    const realOutsideDir = dirname(realpathSync(targetFile));
 
     const guard = new PathGuard(projectRoot, 'strict', {
       allowPaths: [],
@@ -261,7 +267,7 @@ describe('PathGuard with PathPolicy', () => {
   it('deny_paths override takes precedence over allow_paths', () => {
     const targetFile = join(outsideDir, 'secret.txt');
     writeFileSync(targetFile, '');
-    const realOutsideDir = realpathSync(outsideDir);
+    const realOutsideDir = dirname(realpathSync(targetFile));
 
     // Both deny and allow match the path — deny wins.
     const guard = new PathGuard(projectRoot, 'strict', {

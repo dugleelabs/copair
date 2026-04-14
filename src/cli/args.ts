@@ -22,13 +22,13 @@ export interface CliOptions {
   resume?: string | true;
 }
 
-export function parseArgs(argv: string[] = process.argv): CliOptions {
+export function parseArgs(argv: string[] = process.argv, versionString?: string): CliOptions {
   const program = new Command();
 
   program
     .name('copair')
     .description('Model-agnostic AI coding agent for the terminal')
-    .version(pkg.version, '-v, --version')
+    .version(versionString ?? pkg.version, '-v, --version')
     .option('-m, --model <name>', 'Model to use (overrides config default)')
     .option('-c, --config <path>', 'Path to config file')
     .option('--verbose', 'Enable verbose logging (WARN + INFO)', false)

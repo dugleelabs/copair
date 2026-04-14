@@ -90,8 +90,9 @@ for (const f of ['sea-prep.blob', 'dist/sea-entry.mjs', 'dist/react-devtools-stu
 // 12. Verify
 const output = runCapture(platform === 'win32' ? `.\\${binaryName} --version` : `./${binaryName} --version`);
 console.log(`Binary output: ${output}`);
-if (output !== version) {
-  console.error(`Version mismatch! Expected "${version}", got "${output}"`);
+const expected = `copair ${version} (community)`;
+if (output !== expected) {
+  console.error(`Version mismatch! Expected "${expected}", got "${output}"`);
   process.exit(1);
 }
 

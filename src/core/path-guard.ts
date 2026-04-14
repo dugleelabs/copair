@@ -142,13 +142,13 @@ export class PathGuard {
 
   private isDenied(resolved: string): boolean {
     return this.expandedDenyPatterns.some(pattern =>
-      minimatch(resolved, pattern, { dot: true }),
+      minimatch(resolved, pattern, { dot: true, windowsPathsNoEscape: true }),
     );
   }
 
   private isAllowed(resolved: string): boolean {
     return this.expandedAllowPatterns.some(pattern =>
-      minimatch(resolved, pattern, { dot: true }),
+      minimatch(resolved, pattern, { dot: true, windowsPathsNoEscape: true }),
     );
   }
 

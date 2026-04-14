@@ -85,6 +85,14 @@ export interface CopairPlugin {
   version: string;
 
   /**
+   * Optional override for the `--version` output string. When set, replaces
+   * the default `copair <version> (community)` identifier. First registered
+   * plugin that declares this wins. Used by editions (e.g. Pro) to brand the
+   * CLI without requiring community to know about them.
+   */
+  versionIdentifier?: string;
+
+  /**
    * Called once during bootstrap, after config is loaded.
    * Use for setup: register custom providers, tools, commands.
    */

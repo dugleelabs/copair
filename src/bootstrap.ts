@@ -59,13 +59,8 @@ const _pkg = (() => {
   return { version: process.env['COPAIR_VERSION'] ?? '0.0.0-dev' };
 })();
 
-export function getVersionString(options: BootstrapOptions = {}): string {
-  const coreVersion = _pkg.version;
-  const edition = options.edition ?? 'community';
-  if (edition === 'pro' && options.editionVersion) {
-    return `copair ${coreVersion} (Pro ${options.editionVersion})`;
-  }
-  return `copair ${coreVersion} (Community)`;
+export function getVersionString(): string {
+  return `copair ${_pkg.version} (community)`;
 }
 
 // ── Bootstrap options ─────────────────────────────────────────────────────────
@@ -169,7 +164,13 @@ export async function bootstrapCLI(options: BootstrapOptions = {}): Promise<void
     return;
   }
 
-  const cliOpts = parseArgs(options.argv);
+  // Programmatic plugins can override the --version identifier (e.g. Pro edition).
+  // First plugin declaring `versionIdentifier` wins; else fall back to community default.
+  const versionString =
+    options.plugins?.find((p) => p.versionIdentifier)?.versionIdentifier ??
+    getVersionString();
+
+  const cliOpts = parseArgs(options.argv, versionString);
 
   if (cliOpts.debug) {
     logger.setLevel(LogLevel.DEBUG);
@@ -432,7 +433,7 @@ export async function bootstrapCLI(options: BootstrapOptions = {}): Promise<void
   completionEngine.addProvider(new FilePathProvider(cwd));
 
   // Banner is printed before ink takes over — ink will manage the terminal from here
-  printBanner(modelAlias);
+  printBanner(modelAlias, versionString);
   // Small delay to let banner render before ink clears the screen
   await new Promise((r) => setTimeout(r, 50));
 

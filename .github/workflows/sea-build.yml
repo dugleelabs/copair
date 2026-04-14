@@ -94,10 +94,11 @@ jobs:
           chmod +x "${{ matrix.binary }}"
           TAG="${{ github.event.release.tag_name }}"
           VERSION="${TAG#v}"
+          EXPECTED="copair ${VERSION} (community)"
 
           OUTPUT=$(./${{ matrix.binary }} --version)
-          echo "Expected: ${VERSION}, Got: ${OUTPUT}"
-          [ "$OUTPUT" = "$VERSION" ] || { echo "Version mismatch"; exit 1; }
+          echo "Expected: ${EXPECTED}, Got: ${OUTPUT}"
+          [ "$OUTPUT" = "$EXPECTED" ] || { echo "Version mismatch"; exit 1; }
 
           ./${{ matrix.binary }} --help > /dev/null
           echo "${{ matrix.binary }}: OK"
@@ -107,10 +108,11 @@ jobs:
         run: |
           $TAG = "${{ github.event.release.tag_name }}"
           $VERSION = $TAG -replace '^v', ''
+          $EXPECTED = "copair $VERSION (community)"
 
           $OUTPUT = .\${{ matrix.binary }} --version
-          Write-Host "Expected: $VERSION, Got: $OUTPUT"
-          if ($OUTPUT -ne $VERSION) { Write-Error "Version mismatch"; exit 1 }
+          Write-Host "Expected: $EXPECTED, Got: $OUTPUT"
+          if ($OUTPUT -ne $EXPECTED) { Write-Error "Version mismatch"; exit 1 }
 
           .\${{ matrix.binary }} --help | Out-Null
           Write-Host "${{ matrix.binary }}: OK"

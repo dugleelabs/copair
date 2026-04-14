@@ -82,6 +82,7 @@ jobs:
       - name: Download binary from release
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        shell: bash
         run: |
           gh release download "${{ github.event.release.tag_name }}" \
             --repo dugleelabs/copair \

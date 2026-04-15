@@ -9,6 +9,13 @@
   <a href="https://nodejs.org"><img src="https://img.shields.io/node/v/@dugleelabs/copair" alt="node version"></a>
 </p>
 
+<p align="center">
+  <a href="https://copair.dugleelabs.io">Website</a> •
+  <a href="https://github.com/dugleelabs/copair/releases">Releases</a> •
+  <a href="docs/configuration.md">Docs</a> •
+  <a href="https://github.com/dugleelabs/copair/issues">Issues</a>
+</p>
+
 A model-agnostic AI coding agent for the terminal. Works like Claude Code but supports any LLM provider — commercial APIs, open source models, or self-hosted instances.
 
 ```
@@ -236,7 +243,7 @@ plugins:
   - "@scope/my-plugin-package"
 ```
 
-**Copair Pro** is a commercial edition built on top of the open-source core, offering additional features for teams and enterprises.
+**[Copair Pro](https://copair.dugleelabs.io)** is a commercial edition built on top of the open-source core, offering additional features for teams and enterprises.
 
 ## Programmatic API
 

@@ -1,0 +1,6 @@
+# Fake API-key fixtures used in redactor/logger unit tests.
+# These are the literal strings the redaction logic is meant to catch;
+# they are not live secrets.
+cc2bb82c4e0871a047a1a1fd9405bf24e839734e:tests/core/redactor.test.ts:generic-api-key:33
+2cc9ad6079422532ac76646c6c6619d8556450c1:tests/core/logger.test.ts:generic-api-key:44
+2cc9ad6079422532ac76646c6c6619d8556450c1:tests/core/logger.test.ts:generic-api-key:53

@@ -8,6 +8,9 @@ jobs:
   publish-npm:
     name: Publish @dugleelabs/copair to npm
     runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      id-token: write # Required for npm publish --provenance (OIDC attestation)
     steps:
       - uses: actions/checkout@v4
         with:
@@ -28,6 +31,9 @@ jobs:
       - run: pnpm test
 
       - name: Publish @dugleelabs/copair
-        run: pnpm publish --access public --no-git-checks
+        # --no-git-checks: semantic-release publishes from a tagged release ref,
+        # so pnpm's clean-tree + correct-branch check would false-positive here.
+        # Do NOT copy this flag into manual/local publishes.
+        run: pnpm publish --provenance --access public --no-git-checks
         env:
           NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}

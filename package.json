@@ -16,7 +16,7 @@
     "copair": "dist/index.js"
   },
   "scripts": {
-    "build": "tsup",
+    "build": "tsup && node scripts/report-dist-size.mjs",
     "test": "vitest run",
     "test:watch": "vitest",
     "lint": "eslint src/",

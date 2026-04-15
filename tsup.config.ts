@@ -9,6 +9,7 @@ export default defineConfig([
     outDir: 'dist',
     clean: true,
     sourcemap: true,
+    minify: true,
     banner: {
       js: '#!/usr/bin/env node',
     },
@@ -21,6 +22,7 @@ export default defineConfig([
     outDir: 'dist',
     clean: false, // don't wipe CLI output
     sourcemap: true,
+    minify: true,
     dts: true,
   },
 ]);

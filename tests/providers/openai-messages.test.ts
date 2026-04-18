@@ -134,3 +134,80 @@ describe('toOpenAIMessages — text-based tool calling (supportsToolCalling: fal
     expect(result[4]).toEqual({ role: 'assistant', content: 'The latest Python version is 3.12.7.' });
   });
 });
+
+// ─── system-role folding (supportsSystemRole: false) ────────────────────────
+
+describe('toOpenAIMessages — supportsSystemRole: false', () => {
+  it('folds the system prompt into the first user message', () => {
+    const messages: Message[] = [userText('hello')];
+    const result = toOpenAIMessages(messages, 'Be concise.', true, false);
+
+    expect(result).toHaveLength(1);
+    expect(result[0].role).toBe('user');
+    const content = result[0].content as string;
+    expect(content).toContain('System instructions:');
+    expect(content).toContain('Be concise.');
+    expect(content).toContain('---');
+    expect(content).toContain('hello');
+    expect(content.indexOf('System instructions:')).toBeLessThan(
+      content.indexOf('hello'),
+    );
+  });
+
+  it('never emits role:system when supportsSystemRole is false', () => {
+    const messages: Message[] = [
+      { role: 'system', content: [{ type: 'text', text: 'inline system' }] },
+      userText('hi'),
+    ];
+    const result = toOpenAIMessages(messages, 'top system', true, false);
+
+    for (const m of result) {
+      expect(m.role).not.toBe('system');
+    }
+  });
+
+  it('combines top-level systemPrompt with inline system messages', () => {
+    const messages: Message[] = [
+      { role: 'system', content: [{ type: 'text', text: 'inline rules' }] },
+      userText('hi'),
+    ];
+    const result = toOpenAIMessages(messages, 'top-level rules', true, false);
+
+    const content = result[0].content as string;
+    expect(content).toContain('top-level rules');
+    expect(content).toContain('inline rules');
+  });
+
+  it('creates a synthetic user message if none exists', () => {
+    const result = toOpenAIMessages([], 'only system content', true, false);
+
+    expect(result).toHaveLength(1);
+    expect(result[0].role).toBe('user');
+    expect(result[0].content).toContain('only system content');
+  });
+
+  it('preserves existing role:system behavior when supportsSystemRole is true (default)', () => {
+    const messages: Message[] = [userText('hi')];
+    const result = toOpenAIMessages(messages, 'sys', true, true);
+
+    expect(result[0]).toEqual({ role: 'system', content: 'sys' });
+    expect(result[1]).toEqual({ role: 'user', content: 'hi' });
+  });
+
+  it('folds correctly in text-based tool-calling mode too', () => {
+    const messages: Message[] = [
+      userText('search for python'),
+      assistantToolUse('tc1', 'web_search', { query: 'python' }),
+      userToolResult('tc1', 'Python 3.12.7'),
+    ];
+    const result = toOpenAIMessages(messages, 'tool-use rules', false, false);
+
+    for (const m of result) {
+      expect(m.role).not.toBe('system');
+      expect(m.role).not.toBe('tool');
+    }
+    const firstUser = result[0].content as string;
+    expect(firstUser).toContain('tool-use rules');
+    expect(firstUser).toContain('search for python');
+  });
+});

@@ -12,22 +12,32 @@ export function toOpenAIMessages(
   messages: Message[],
   systemPrompt?: string,
   supportsToolCalling = true,
+  supportsSystemRole = true,
 ): OpenAI.Chat.ChatCompletionMessageParam[] {
   const result: OpenAI.Chat.ChatCompletionMessageParam[] = [];
+  const foldedSystemChunks: string[] = [];
+
+  const emitSystem = (content: string) => {
+    if (!content) return;
+    if (supportsSystemRole) {
+      result.push({ role: 'system', content });
+    } else {
+      foldedSystemChunks.push(content);
+    }
+  };
 
   if (systemPrompt) {
-    result.push({ role: 'system', content: systemPrompt });
+    emitSystem(systemPrompt);
   }
 
   for (const msg of messages) {
     if (msg.role === 'system') {
-      result.push({
-        role: 'system',
-        content: msg.content
+      emitSystem(
+        msg.content
           .filter((b) => b.type === 'text')
           .map((b) => b.text)
           .join('\n'),
-      });
+      );
       continue;
     }
 
@@ -107,6 +117,24 @@ export function toOpenAIMessages(
     }
   }
 
+  if (!supportsSystemRole && foldedSystemChunks.length > 0) {
+    const systemBlock = `System instructions:\n${foldedSystemChunks.join('\n\n')}`;
+    const firstUserIdx = result.findIndex((m) => m.role === 'user');
+    if (firstUserIdx >= 0) {
+      const existing = result[firstUserIdx];
+      const existingContent =
+        typeof existing.content === 'string' ? existing.content : '';
+      result[firstUserIdx] = {
+        role: 'user',
+        content: existingContent
+          ? `${systemBlock}\n\n---\n\n${existingContent}`
+          : systemBlock,
+      };
+    } else {
+      result.unshift({ role: 'user', content: systemBlock });
+    }
+  }
+
   return result;
 }
 
@@ -141,6 +169,7 @@ export function createOpenAIProvider(
 
   const supportsToolCalling = modelConfig.supports_tool_calling !== false;
   const supportsStreaming = modelConfig.supports_streaming !== false;
+  const supportsSystemRole = modelConfig.supports_system_role !== false;
   const maxContextWindow = modelConfig.context_window ?? 128000;
 
   return {
@@ -154,10 +183,31 @@ export function createOpenAIProvider(
       tools: ToolDefinition[],
       options: ProviderOptions,
     ): AsyncIterableIterator<StreamChunk> {
-      const openaiMessages = toOpenAIMessages(messages, options.systemPrompt, supportsToolCalling);
+      const openaiMessages = toOpenAIMessages(
+        messages,
+        options.systemPrompt,
+        supportsToolCalling,
+        supportsSystemRole,
+      );
       const openaiTools = supportsToolCalling
         ? toOpenAITools(tools)
         : undefined;
+
+      if (process.env.COPAIR_DUMP_REQUEST === '1') {
+        const _dump = {
+          model: modelConfig.id,
+          messages: openaiMessages,
+          tools: openaiTools,
+          stream: options.stream && supportsStreaming,
+        };
+        process.stderr.write(
+          '[copair-debug] outgoing request:\n' +
+            JSON.stringify(_dump, null, 2) +
+            '\n[copair-debug] total bytes: ' +
+            JSON.stringify(_dump).length +
+            '\n',
+        );
+      }
 
       if (options.stream && supportsStreaming) {
         const stream = await client.chat.completions.create({

@@ -196,6 +196,16 @@ python -m vllm.entrypoints.openai.api_server \
   --device cpu
 ```
 
+## System-Role Limitations
+
+Some hosted OpenAI-compatible gateways (notably several Qwen-family distills on `inferx.net` and similar platforms) reject requests containing a `role: "system"` message and return an opaque `400 BAD_REQUEST`. If your gateway exhibits this behavior, set:
+
+```yaml
+supports_system_role: false
+```
+
+on the affected model. Copair will fold its system prompt (tool-use instructions, project context, behavior rules) into the first user message instead, preserving all instruction content in a shape the gateway accepts.
+
 ## Tool Calling Limitations
 
 Local models like Qwen 3.5 typically don't support native tool calling. Copair automatically falls back to prompt-based tool extraction, but this can be less reliable.

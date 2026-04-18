@@ -10,3 +10,8 @@ dist/
 
 copair
 copair-test-sea
+
+*.log
+debug
+
+.claude

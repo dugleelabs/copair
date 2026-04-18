@@ -25,6 +25,7 @@ providers:
         context_window: 200000    # Max input context
         supports_tool_calling: true
         supports_streaming: true
+        supports_system_role: true    # Set false for gateways that reject role:"system"
 
 permissions:
   mode: ask                 # ask | auto-approve | deny
@@ -56,6 +57,14 @@ web_search:
 - **deny** — Blocks all tool execution.
 
 The `allow_commands` list auto-approves exact bash commands. Commands with shell operators (`;`, `&&`, `|`, etc.) never match the allow-list.
+
+## Model Capability Flags
+
+Each entry under `models.<alias>` accepts these optional booleans:
+
+- `supports_tool_calling` (default `true`) — set `false` for models without native OpenAI tool-calling; Copair falls back to XML-based prompt tool extraction.
+- `supports_streaming` (default `true`) — set `false` if the gateway rejects streamed requests or the `stream_options` field.
+- `supports_system_role` (default `true`) — set `false` for OpenAI-compatible gateways that reject `role: "system"` messages (seen on some Qwen distills and hosted deploys with pinned server-side prompts). When `false`, Copair folds the system prompt into the first user message instead.
 
 ## Environment Variables
 

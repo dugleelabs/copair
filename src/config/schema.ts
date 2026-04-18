@@ -6,6 +6,10 @@ export const ModelConfigSchema = z.object({
   context_window: z.number().positive().optional(),
   supports_tool_calling: z.boolean().optional(),
   supports_streaming: z.boolean().optional(),
+  // Some OpenAI-compatible gateways (certain Qwen distills, hosted deploys with pinned prompts)
+  // reject messages with role:"system". When false, the system prompt is folded into the first
+  // user message instead. Default true preserves existing behavior.
+  supports_system_role: z.boolean().optional(),
   tool_call_format: z.enum(['dsml', 'qwen-xml', 'fenced-block']).optional(),
 });
 

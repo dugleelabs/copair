@@ -49,6 +49,8 @@ export interface ApprovalRequest {
   warning?: string;
   /** Present when a bash command references a path outside the project root. */
   crossRepoBashPath?: string;
+  /** Present when a read/glob/grep targets a path outside the project root. */
+  crossRepoReadPath?: string;
 }
 
 // ── Typed event map ─────────────────────────────────────────────────────────

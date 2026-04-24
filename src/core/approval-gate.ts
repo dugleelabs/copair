@@ -237,6 +237,9 @@ export class ApprovalGate {
       const crossRepoBashPath = typeof input._crossRepoBashPath === 'string'
         ? input._crossRepoBashPath
         : undefined;
+      const crossRepoReadPath = typeof input._crossRepoReadPath === 'string'
+        ? input._crossRepoReadPath
+        : undefined;
 
       // Strip internal _ prefixed fields before sending to the UI — they are
       // gate metadata and must not be shown to the user or returned to the model.
@@ -252,6 +255,7 @@ export class ApprovalGate {
         total: this.pendingTotal,
         warning,
         crossRepoBashPath,
+        crossRepoReadPath,
       }, (answer: ApprovalAnswer) => {
         switch (answer) {
           case 'allow':
@@ -315,6 +319,16 @@ export class ApprovalGate {
     if (crossRepoBashPath) {
       process.stdout.write(
         chalk.red(`\n  \u26A0  WARNING: This bash command references a path outside the project root (${crossRepoBashPath})\n`),
+      );
+    }
+
+    const crossRepoReadPath = typeof input._crossRepoReadPath === 'string'
+      ? input._crossRepoReadPath
+      : undefined;
+
+    if (crossRepoReadPath) {
+      process.stdout.write(
+        chalk.yellow(`\n  \u26A0  This path is outside the current project root — approval required (${crossRepoReadPath})\n`),
       );
     }
 

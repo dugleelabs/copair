@@ -120,6 +120,7 @@ export class ToolExecutor {
         const raw = rawInput[field];
         if (typeof raw === 'string' && !this.pathGuard.isInsideProject(raw)) {
           rawInput._crossRepoRead = true;
+          rawInput._crossRepoReadPath = raw;
           void this.auditLog?.append({
             event: 'cross_repo_read',
             tool: toolName,
@@ -156,6 +157,7 @@ export class ToolExecutor {
     delete rawInput._crossRepoBash;
     delete rawInput._crossRepoBashPath;
     delete rawInput._crossRepoRead;
+    delete rawInput._crossRepoReadPath;
 
     // Time only the actual tool execution, not the approval prompt
     const start = performance.now();

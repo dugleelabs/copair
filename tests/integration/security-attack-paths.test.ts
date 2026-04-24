@@ -121,7 +121,7 @@ describe('Security — attack-path integration (T-21)', () => {
   // ── 2. Path traversal via tool ──────────────────────────────────────────────
 
   describe('path traversal via tool input', () => {
-    it('read tool with ../../../../etc/passwd is denied by PathGuard', async () => {
+    it('read tool with ../../../../etc/passwd is denied (cross-repo gate, F-04)', async () => {
       const guard = new PathGuard(projectRoot);
       const gate = new ApprovalGate('auto-approve');
       const tool = makeFakeTool('read', { content: 'secret file contents', isError: false });
@@ -130,8 +130,8 @@ describe('Security — attack-path integration (T-21)', () => {
       const result = await executor.execute('read', { file_path: '../../../../etc/passwd' });
 
       expect(result.isError).toBe(true);
-      // Agent receives a generic error — no path details leaked
-      expect(result.content).toContain('Access denied');
+      // F-04: cross-repo reads are now escalated to always-ask at the gate level
+      // before PathGuard runs. Path details are not leaked to the agent.
       expect(result.content).not.toContain('/etc/passwd');
       expect(result.content).not.toContain('secret file contents');
       expect(tool.execute).not.toHaveBeenCalled();

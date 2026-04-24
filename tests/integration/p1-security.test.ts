@@ -239,7 +239,7 @@ describe('AuditLog integration — ToolExecutor pipeline', () => {
     expect(rejectionEntry?.outcome).toBe('error');
   });
 
-  it('produces a path_block audit entry when PathGuard denies a path', async () => {
+  it('produces a cross_repo_read audit entry when a read targets a path outside the project (F-04)', async () => {
     const guard = new PathGuard(projectRoot);
     const gate = new ApprovalGate('auto-approve');
     const auditLog = new AuditLog(sessionDir);
@@ -254,10 +254,12 @@ describe('AuditLog integration — ToolExecutor pipeline', () => {
     await executor.execute('read', { file_path: '/etc/hosts' });
 
     const entries = readAuditEntries(sessionDir);
-    const pathBlockEntry = entries.find((e) => e.event === 'path_block');
-    expect(pathBlockEntry).toBeDefined();
-    expect(pathBlockEntry?.tool).toBe('read');
-    expect(pathBlockEntry?.outcome).toBe('denied');
+    // F-04: cross-repo reads are now caught at the gate level (always-ask escalation)
+    // before reaching PathGuard, producing a cross_repo_read flagging event.
+    const flagEntry = entries.find((e) => e.event === 'cross_repo_read');
+    expect(flagEntry).toBeDefined();
+    expect(flagEntry?.tool).toBe('read');
+    expect(flagEntry?.outcome).toBe('flagged');
   });
 
   it('audit log input_summary contains no raw API key secrets', async () => {

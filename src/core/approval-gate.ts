@@ -238,9 +238,15 @@ export class ApprovalGate {
         ? input._crossRepoBashPath
         : undefined;
 
+      // Strip internal _ prefixed fields before sending to the UI — they are
+      // gate metadata and must not be shown to the user or returned to the model.
+      const displayInput = Object.fromEntries(
+        Object.entries(input).filter(([k]) => !k.startsWith('_'))
+      );
+
       this.bridge!.emit('approval-request', {
         toolName,
-        input,
+        input: displayInput,
         summary,
         index: this.pendingIndex,
         total: this.pendingTotal,
@@ -408,7 +414,14 @@ export function formatSummary(toolName: string, input: Record<string, unknown>):
     case 'write':      raw = `write ${input.file_path}`; break;
     case 'edit':       raw = `edit  ${input.file_path}`; break;
     case 'web_search': raw = `Copair web search  "${input.query}"`; break;
-    default:           raw = `${toolName}  ${JSON.stringify(input)}`; break;
+    default: {
+      // Strip internal _ prefixed flags — they are not meaningful to the user
+      const displayInput = Object.fromEntries(
+        Object.entries(input).filter(([k]) => !k.startsWith('_'))
+      );
+      raw = `${toolName}  ${JSON.stringify(displayInput)}`;
+      break;
+    }
   }
   // Collapse newlines but do NOT truncate — full command visible
   return raw.replace(/\n/g, ' ').replace(/\s+/g, ' ').trim();

@@ -5,7 +5,7 @@ import { redact } from './redactor.js';
 import { logger } from './logger.js';
 import { McpTimeoutError } from '../mcp/client.js';
 import type { AuditLog } from './audit-log.js';
-import { detectSensitivePaths } from '../tools/bash.js';
+import { detectSensitivePaths, extractPathTokens } from '../tools/bash.js';
 
 export interface ExecutionResult {
   content: string;
@@ -78,7 +78,7 @@ export class ToolExecutor {
       }
     }
 
-    // T-35: Bash sensitive-path warning — scan before showing approval prompt so
+    // Bash sensitive-path warning — scan before showing approval prompt so
     // the user sees the warning and can make an informed decision. Does NOT block.
     if (toolName === 'bash' && typeof rawInput.command === 'string') {
       const matched = detectSensitivePaths(rawInput.command);
@@ -92,6 +92,36 @@ export class ToolExecutor {
           detail,
         });
         rawInput._sensitivePathWarning = detail;
+      }
+
+      // F-02: Cross-repo bash path scan — flag any token that resolves outside the
+      // project root before the gate fires, so the gate can escalate to 'always-ask'.
+      const tokens = extractPathTokens(rawInput.command);
+      for (const token of tokens) {
+        if (!this.pathGuard.isInsideProject(token)) {
+          rawInput._crossRepoBash = true;
+          rawInput._crossRepoBashPath = token;
+          void this.auditLog?.append({
+            event: 'bash_cross_repo',
+            tool: 'bash',
+            input_summary: token,
+            outcome: 'flagged',
+            detail: 'path outside project root',
+          });
+          break;
+        }
+      }
+    }
+
+    // F-04: Cross-repo read escalation — flag read-class tools that reference paths
+    // outside the project root so the gate can require explicit approval.
+    if (toolName === 'read' || toolName === 'glob' || toolName === 'grep') {
+      for (const field of ['file_path', 'path', 'pattern'] as const) {
+        const raw = rawInput[field];
+        if (typeof raw === 'string' && !this.pathGuard.isInsideProject(raw)) {
+          rawInput._crossRepoRead = true;
+          break;
+        }
       }
     }
 
@@ -116,6 +146,9 @@ export class ToolExecutor {
 
     // Remove internal metadata injected for the approval UI before executing.
     delete rawInput._sensitivePathWarning;
+    delete rawInput._crossRepoBash;
+    delete rawInput._crossRepoBashPath;
+    delete rawInput._crossRepoRead;
 
     // Time only the actual tool execution, not the approval prompt
     const start = performance.now();

@@ -10,6 +10,7 @@ export interface StepExecutors {
   agentRunner: AgentRunner;
   commandRunner: CommandRunner;
   agentContext: AgentContext;
+  shellApprover?: (command: string) => Promise<boolean>;
 }
 
 async function resolveVars(
@@ -56,6 +57,12 @@ export async function executeStep(
 
     case 'shell': {
       const command = await resolveVars(step.command ?? '', wfContext, executors.agentContext);
+      if (executors.shellApprover) {
+        const allowed = await executors.shellApprover(command);
+        if (!allowed) {
+          return { exit_code: 1, output: 'Shell step denied by user.' };
+        }
+      }
       try {
         const output = execSync(command, {
           cwd: executors.agentContext.cwd,

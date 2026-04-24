@@ -47,6 +47,8 @@ export interface ApprovalRequest {
   diff?: DiffInfo;
   /** Present when a bash command references a sensitive system path. */
   warning?: string;
+  /** Present when a bash command references a path outside the project root. */
+  crossRepoBashPath?: string;
 }
 
 // ── Typed event map ─────────────────────────────────────────────────────────

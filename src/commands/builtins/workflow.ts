@@ -4,6 +4,7 @@ import { loadWorkflows, WorkflowEngine } from '../../workflows/index.js';
 export function createWorkflowCommand(
   agentRunner: (prompt: string) => Promise<void>,
   commandRunner: (input: string) => Promise<boolean>,
+  shellApprover?: (command: string) => Promise<boolean>,
 ): Command {
   return {
     definition: {
@@ -50,6 +51,7 @@ export function createWorkflowCommand(
         agentRunner,
         commandRunner,
         agentContext: context,
+        shellApprover,
       });
 
       await engine.execute(workflow, inputOverrides);

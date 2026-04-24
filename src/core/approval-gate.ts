@@ -1,3 +1,4 @@
+import { existsSync } from 'node:fs';
 import { resolve as resolvePath, sep } from 'node:path';
 import chalk from 'chalk';
 import type { AllowList } from './allow-list.js';
@@ -18,6 +19,39 @@ export type GateMode = 'ask' | 'auto-approve' | 'deny';
 const PERMISSION_SENSITIVE_FILES = ['config.yaml', 'allow.yaml', 'audit.jsonl'];
 
 /**
+ * Sensitive file patterns — reads AND writes to paths matching these patterns
+ * always require explicit approval, even inside the project root.
+ * Configurable list; these are the defaults.
+ */
+const SENSITIVE_FILE_PATTERNS: RegExp[] = [
+  /\.env[^/]*$/i,
+  /\.pem$/i,
+  /\.key$/i,
+  /\bid_rsa\b/,
+  /\bid_ed25519\b/,
+  /\.git\/config$/,
+  /credentials[^/]*$/i,
+  /secret[^/]*/i,
+];
+
+function isSensitivePath(input: Record<string, unknown>): boolean {
+  const path = String(input.file_path ?? input.path ?? input.pattern ?? '');
+  return SENSITIVE_FILE_PATTERNS.some((re) => re.test(path));
+}
+
+/**
+ * Risk classifier for read-class tools.
+ * - Cross-repo references (flagged by tool-executor) → always-ask (bypasses auto-approve)
+ * - Sensitive file patterns inside the project root → needs-approval
+ * - Normal intra-repo reads → safe (auto-allowed)
+ */
+const readRisk = (input: Record<string, unknown>): RiskLevel => {
+  if (input._crossRepoRead) return 'always-ask';
+  if (isSensitivePath(input)) return 'needs-approval';
+  return 'safe';
+};
+
+/**
  * Static risk classification table.
  *
  * This is the source of truth for what requires approval. It lives here,
@@ -26,17 +60,17 @@ const PERMISSION_SENSITIVE_FILES = ['config.yaml', 'allow.yaml', 'audit.jsonl'];
  * no signal about whether a call will be gated before it is submitted.
  */
 const RISK_TABLE: Record<string, (input: Record<string, unknown>) => RiskLevel> = {
-  // ── Read-only: never need approval ──────────────────────────────────────
-  read: () => 'safe',
-  glob: () => 'safe',
-  grep: () => 'safe',
+  // ── Read-only: auto-allowed within project; escalated for cross-repo or sensitive paths ──
+  read: readRisk,
+  glob: readRisk,
+  grep: readRisk,
 
-  // ── File mutations: always need approval ────────────────────────────────
-  write: () => 'needs-approval',
-  edit: () => 'needs-approval',
+  // ── File mutations: always need approval; sensitive paths force always-ask ──
+  write: (input) => isSensitivePath(input) ? 'always-ask' : 'needs-approval',
+  edit:  (input) => isSensitivePath(input) ? 'always-ask' : 'needs-approval',
 
-  // ── Arbitrary shell: always needs approval ──────────────────────────────
-  bash: () => 'needs-approval',
+  // ── Arbitrary shell: always needs approval; cross-repo paths force always-ask ──
+  bash: (input) => input._crossRepoBash ? 'always-ask' : 'needs-approval',
 
   // ── Web search: always prompt even in auto-approve (network + token cost) ──
   web_search: (): RiskLevel => 'always-ask',
@@ -147,10 +181,23 @@ export class ApprovalGate {
       return true;
     }
 
-    // File-based allow list — pre-approved operations bypass the prompt
+    // File-based allow list — pre-approved operations bypass the prompt.
+    // Exception: new file creation always requires an explicit prompt regardless
+    // of allow-list entries. Users cannot accidentally pre-approve writes to
+    // files that don't exist yet.
     if (this.allowList?.matches(toolName, input)) {
-      void this.auditLog?.append({ event: 'approval', tool: toolName, approved_by: 'allow_list', outcome: 'allowed' });
-      return true;
+      if (toolName === 'write') {
+        const filePath = typeof input.file_path === 'string' ? input.file_path : '';
+        if (filePath && !existsSync(filePath)) {
+          // New file — fall through to prompt even if allow-list matches
+        } else {
+          void this.auditLog?.append({ event: 'approval', tool: toolName, approved_by: 'allow_list', outcome: 'allowed' });
+          return true;
+        }
+      } else {
+        void this.auditLog?.append({ event: 'approval', tool: toolName, approved_by: 'allow_list', outcome: 'allowed' });
+        return true;
+      }
     }
 
     const key = sessionKey(toolName, input);
@@ -187,6 +234,9 @@ export class ApprovalGate {
       const warning = typeof input._sensitivePathWarning === 'string'
         ? input._sensitivePathWarning
         : undefined;
+      const crossRepoBashPath = typeof input._crossRepoBashPath === 'string'
+        ? input._crossRepoBashPath
+        : undefined;
 
       this.bridge!.emit('approval-request', {
         toolName,
@@ -195,6 +245,7 @@ export class ApprovalGate {
         index: this.pendingIndex,
         total: this.pendingTotal,
         warning,
+        crossRepoBashPath,
       }, (answer: ApprovalAnswer) => {
         switch (answer) {
           case 'allow':
@@ -245,9 +296,19 @@ export class ApprovalGate {
       ? input._sensitivePathWarning
       : undefined;
 
+    const crossRepoBashPath = typeof input._crossRepoBashPath === 'string'
+      ? input._crossRepoBashPath
+      : undefined;
+
     if (warning) {
       process.stdout.write(
         chalk.red(`\n  \u26A0  WARNING: This command accesses a sensitive system path outside the project root (${warning})\n`),
+      );
+    }
+
+    if (crossRepoBashPath) {
+      process.stdout.write(
+        chalk.red(`\n  \u26A0  WARNING: This bash command references a path outside the project root (${crossRepoBashPath})\n`),
       );
     }
 
@@ -301,6 +362,9 @@ export class ApprovalGate {
 /**
  * Operation-level session key so that "always allow git diff" does not
  * carry over to "always allow git commit".
+ *
+ * For write/edit, the key is path-specific so that clicking "always" for
+ * one file does not silently approve writes to other files in the session.
  */
 function sessionKey(toolName: string, input: Record<string, unknown>): string {
   if (toolName === 'bash') {
@@ -310,6 +374,10 @@ function sessionKey(toolName: string, input: Record<string, unknown>): string {
   if (toolName === 'git') {
     const sub = (typeof input.args === 'string' ? input.args : '').trim().split(/\s+/)[0];
     return `git:${sub}`;
+  }
+  if (toolName === 'write' || toolName === 'edit') {
+    const filePath = typeof input.file_path === 'string' ? resolvePath(input.file_path) : '';
+    return filePath ? `${toolName}:${filePath}` : toolName;
   }
   return toolName;
 }

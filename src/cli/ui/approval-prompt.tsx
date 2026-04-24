@@ -47,6 +47,30 @@ export function ApprovalPrompt({ request, onRespond: _onRespond }: ApprovalPromp
           </Box>
         )}
 
+        {/* Cross-repo bash warning */}
+        {request.crossRepoBashPath && (
+          <Box marginTop={1}>
+            <Text color="red" bold>{'\u26A0'} WARNING: </Text>
+            <Text wrap="wrap">
+              {'This bash command references a path outside the project root ('}
+              {request.crossRepoBashPath}
+              {')'}
+            </Text>
+          </Box>
+        )}
+
+        {/* Cross-repo read warning */}
+        {request.crossRepoReadPath && (
+          <Box marginTop={1}>
+            <Text color="yellow" bold>{'\u26A0'} </Text>
+            <Text wrap="wrap">
+              {'This path is outside the current project root — approval required ('}
+              {request.crossRepoReadPath}
+              {')'}
+            </Text>
+          </Box>
+        )}
+
         {/* Tool name and full summary — NO truncation */}
         <Box marginTop={1}>
           <Text bold>{request.toolName}: </Text>

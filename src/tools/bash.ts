@@ -20,6 +20,29 @@ export const SENSITIVE_PATH_PATTERNS: Array<{ name: string; pattern: RegExp }> =
 ];
 
 /**
+ * Regex that captures path-like tokens from a bash command string.
+ * Matches tokens starting with /, ./, ../, or ~/ that are not followed by
+ * shell metacharacters. Intentionally heuristic — false positives result in
+ * a gate prompt, not a silent bypass.
+ */
+const PATH_TOKEN_RE = /(?:^|\s)((?:\/|\.\.?\/|~\/)[^\s'";&|<>]+)/g;
+
+/**
+ * Extract path-like tokens from a bash command string.
+ * Used by the tool executor to check whether a bash command references
+ * paths outside the project root before the approval gate fires.
+ */
+export function extractPathTokens(command: string): string[] {
+  const tokens: string[] = [];
+  PATH_TOKEN_RE.lastIndex = 0;
+  let m: RegExpExecArray | null;
+  while ((m = PATH_TOKEN_RE.exec(command)) !== null) {
+    tokens.push(m[1]);
+  }
+  return tokens;
+}
+
+/**
  * Scan a bash command string for references to sensitive system paths.
  * Returns the names of all matched patterns (empty array = no matches).
  */

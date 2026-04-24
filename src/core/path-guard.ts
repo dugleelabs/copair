@@ -140,6 +140,20 @@ export class PathGuard {
     return { allowed: false, reason: 'access-denied' };
   }
 
+  /**
+   * Check whether a raw path resolves to somewhere inside the project root.
+   * Used by the tool executor to flag cross-repo references before the gate fires.
+   * Returns false on any resolution error — treat as outside.
+   */
+  isInsideProject(rawPath: string): boolean {
+    try {
+      const resolved = existsSync(rawPath) ? realpathSync(rawPath) : resolve(rawPath);
+      return resolved.startsWith(this.projectRoot + sep) || resolved === this.projectRoot;
+    } catch {
+      return false;
+    }
+  }
+
   private isDenied(resolved: string): boolean {
     return this.expandedDenyPatterns.some(pattern =>
       minimatch(resolved, pattern, { dot: true, windowsPathsNoEscape: true }),

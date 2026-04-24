@@ -401,6 +401,7 @@ export async function bootstrapCLI(options: BootstrapOptions = {}): Promise<void
       }
       return !!result;
     },
+    async (command: string) => gate.allow('bash', { command }),
   );
 
   await cmdRegistry.loadAll();

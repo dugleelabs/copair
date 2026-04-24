@@ -26,9 +26,10 @@ export type AuditEvent =
   | 'denial'
   | 'path_block'
   | 'schema_rejection'
-  | 'bash_sensitive_path';
+  | 'bash_sensitive_path'
+  | 'bash_cross_repo';
 
-export type AuditOutcome = 'allowed' | 'denied' | 'error';
+export type AuditOutcome = 'allowed' | 'denied' | 'error' | 'flagged';
 
 export interface AuditEntry {
   ts: string;

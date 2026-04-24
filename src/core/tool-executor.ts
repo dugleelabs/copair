@@ -120,6 +120,13 @@ export class ToolExecutor {
         const raw = rawInput[field];
         if (typeof raw === 'string' && !this.pathGuard.isInsideProject(raw)) {
           rawInput._crossRepoRead = true;
+          void this.auditLog?.append({
+            event: 'cross_repo_read',
+            tool: toolName,
+            input_summary: raw,
+            outcome: 'flagged',
+            detail: 'path outside project root — escalated to always-ask',
+          });
           break;
         }
       }

@@ -27,7 +27,8 @@ export type AuditEvent =
   | 'path_block'
   | 'schema_rejection'
   | 'bash_sensitive_path'
-  | 'bash_cross_repo';
+  | 'bash_cross_repo'
+  | 'cross_repo_read';
 
 export type AuditOutcome = 'allowed' | 'denied' | 'error' | 'flagged';
 

@@ -109,7 +109,6 @@ export class Renderer {
     for await (const chunk of stream) {
       switch (chunk.type) {
         case 'text': {
-          this.stopThinkingSpinner();
           if (this.deltaSpinner) {
             this.deltaSpinner.stop();
             this.deltaSpinner = null;
@@ -122,6 +121,17 @@ export class Renderer {
           // and are never passed through this sanitization step.
           const raw = sanitizeForTerminal(chunk.text ?? '');
           const display = textFilter ? textFilter.write(raw) : raw;
+
+          // F-06: Keep thinking spinner alive during text streaming — update
+          // label with a rolling fragment so long waits feel transparent.
+          // Spinner is on stderr; text goes to stdout — they coexist on the terminal.
+          if (this.thinkingSpinner) {
+            const fragment = extractSpinnerFragment(raw);
+            if (fragment) {
+              this.thinkingSpinner.updateText(chalk.dim(fragment));
+            }
+          }
+
           if (display && this.mdWriter) this.mdWriter.write(display);
           fullText += raw; // raw kept for parser
 
@@ -490,6 +500,22 @@ export class Renderer {
 function formatDuration(ms: number): string {
   if (ms < 1000) return `${Math.round(ms)}ms`;
   return `${(ms / 1000).toFixed(1)}s`;
+}
+
+/**
+ * Return the last non-empty, non-markup line of a streaming text fragment,
+ * truncated to 60 characters with an ellipsis. Used to update the spinner
+ * label while the model is thinking.
+ */
+function extractSpinnerFragment(text: string): string {
+  const lines = text.split('\n');
+  for (let i = lines.length - 1; i >= 0; i--) {
+    const line = lines[i].trim();
+    if (line.length > 0) {
+      return line.length <= 60 ? line : line.slice(0, 59) + '…';
+    }
+  }
+  return '';
 }
 
 /** Extract the file path from a unified diff header, e.g. "diff --git a/foo b/foo" → "foo". */

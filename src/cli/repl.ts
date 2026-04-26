@@ -4,6 +4,7 @@ import { join } from 'node:path';
 import { homedir } from 'node:os';
 import chalk from 'chalk';
 import { printBanner } from './banner.js';
+import { detectGitContext } from '../core/git-context.js';
 
 const HISTORY_FILE = join(homedir(), '.copair', 'history');
 const MAX_HISTORY = 500;
@@ -24,11 +25,25 @@ export class Repl {
   private ctrlCTimer: ReturnType<typeof setTimeout> | null = null;
   private history: string[] = [];
   private sessionIdentifier: string | null = null;
+  private branch: string | null = null;
+  private cwd: string;
 
-  constructor(callbacks: ReplCallbacks, modelName: string) {
+  constructor(callbacks: ReplCallbacks, modelName: string, cwd = process.cwd()) {
     this.callbacks = callbacks;
     this.modelName = modelName;
+    this.cwd = cwd;
     this.history = loadHistory();
+    this.branch = this.detectBranch();
+  }
+
+  setBranch(branch: string | null): void {
+    this.branch = branch;
+  }
+
+  private detectBranch(): string | null {
+    const ctx = detectGitContext(this.cwd);
+    if (!ctx.isGitRepo || !ctx.branch) return null;
+    return ctx.branch === 'HEAD' ? '(HEAD detached)' : ctx.branch;
   }
 
   setModel(name: string): void {
@@ -41,7 +56,8 @@ export class Repl {
 
   private get prompt(): string {
     const session = this.sessionIdentifier ? ` [${this.sessionIdentifier}]` : '';
-    return chalk.cyan(`copair (${this.modelName})`) + chalk.dim(session) + chalk.gray(' > ');
+    const branchSuffix = this.branch ? chalk.green(` (${this.branch})`) : '';
+    return chalk.cyan(`copair (${this.modelName})`) + chalk.dim(session) + branchSuffix + chalk.gray(' > ');
   }
 
   async start(): Promise<void> {
@@ -75,6 +91,7 @@ export class Repl {
       } else {
         await this.callbacks.onMessage(trimmed);
       }
+      this.branch = this.detectBranch();
     }
 
     await this.doExit();

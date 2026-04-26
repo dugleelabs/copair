@@ -2,6 +2,30 @@
 
 All notable changes to copair are documented here.
 
+## [Unreleased] — Bug Fixes, Security, and UX Polish (spec 028 Phase A)
+
+### Security
+
+- **New-file creation gate (F-01)** — Files can no longer be written to disk before the user approves them. Previously, `write` calls could create new files that the approval gate would then process after the fact. Now, allow-list entries for `write` do not bypass approval when the target file does not yet exist — new file creation always requires explicit user confirmation. Additionally, shell steps in workflow YAML files now pass through the approval gate before executing.
+
+- **Session key path-specificity (F-01)** — Clicking "always allow" for a write or read operation now scopes the session permission to that specific file path, not to the tool name. Previously, "always allow write" would silently approve writes to any file in the session.
+
+- **Cross-repository gate hardened (F-02)** — Bash commands that reference paths outside the project root (via `../`, absolute paths, or `~/`) are now detected before the approval gate fires and escalated to `always-ask`. This enforcement is code-level: no model can talk its way past it by choosing different argument phrasing. A red warning is shown in both the legacy prompt and the Ink approval UI before the user sees the approval box.
+
+### Changed
+
+- **Tiered read approval (F-04)** — Reads to files inside the project root are now auto-allowed (no approval prompt). Cross-repository reads (`read`/`glob`/`grep` targeting paths outside the project root) still require explicit approval. Reads of sensitive files (`.env*`, `*.pem`, `*.key`, `id_rsa`, `id_ed25519`, `.git/config`, credentials, secrets) require approval even inside the project root.
+
+- **Diff shown at approval prompt (F-03)** — Unified diffs for `write` and `edit` tool calls are now computed and displayed at the approval prompt, before execution. Legacy terminal mode shows the diff as plain text; the Ink UI uses the `SimpleDiff` component. Post-execution diff display has been removed.
+
+### Added
+
+- **Context limit detection (F-05)** — copair now detects when a small/local model (e.g. Qwen) silently stops responding due to context limits. Two signals are checked: (1) input tokens reaching ≥ 90% of the model's context window, and (2) a truncation heuristic (text-only response ending mid-word with no tool calls). On detection, a yellow warning is shown and the user is offered compact or abort.
+
+- **Rolling thinking summary (F-06)** — The thinking spinner now shows a rolling preview of the model's streaming text during inference, so long waits feel transparent. The spinner stays alive until a tool call arrives (or the response completes), then stops cleanly.
+
+- **Git branch in REPL prompt (F-07)** — The legacy REPL prompt now shows the current git branch in green, e.g. `copair (claude-3-5-sonnet) (main) >`. The branch refreshes after each turn to reflect branch switches made during the session.
+
 ## [Unreleased] — P0 Security Foundation (spec 022)
 
 ### Security

@@ -3,20 +3,35 @@ import type { Message, Provider } from '../providers/interface.js';
 export class ContextWindowManager {
   private tokenLimit: number;
   private reserveTokens: number;
+  private compactionPending = false;
 
   constructor(tokenLimit: number, reserveTokens = 4096) {
     this.tokenLimit = tokenLimit;
     this.reserveTokens = reserveTokens;
   }
 
+  get maxTokens(): number {
+    return this.tokenLimit;
+  }
+
   setTokenLimit(limit: number): void {
     this.tokenLimit = limit;
+  }
+
+  /** Force summarization on the next checkAndTruncate() call regardless of token count. */
+  markForCompaction(): void {
+    this.compactionPending = true;
   }
 
   async checkAndTruncate(
     messages: Message[],
     provider: Provider,
   ): Promise<Message[]> {
+    if (this.compactionPending) {
+      this.compactionPending = false;
+      return this.summarize(messages, provider);
+    }
+
     const tokenCount = await this.countTokens(messages, provider);
     const available = this.tokenLimit - this.reserveTokens;
 

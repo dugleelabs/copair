@@ -5,6 +5,7 @@ import type { StreamChunk } from '../providers/interface.js';
 import type { AgentBridge } from './ui/agent-bridge.js';
 import type { StreamingMarkupFilter } from '../core/formats/index.js';
 import { sanitizeForTerminal } from './ansi-sanitizer.js';
+import { readFromTty } from './tty-prompt.js';
 
 /**
  * Build a human-readable one-liner for a tool call, e.g.:
@@ -432,6 +433,36 @@ export class Renderer {
           `$${totals.totalCost.toFixed(2).padStart(9)}`,
       ),
     );
+  }
+
+  showContextLimitWarning(): void {
+    process.stderr.write(
+      chalk.yellow('\n  ⚠  Context limit detected — the model may have stopped responding due to a full context window.\n'),
+    );
+    this.bridge?.emit('context-limit-warning');
+  }
+
+  async promptContextLimitAction(): Promise<'compact' | 'abort'> {
+    if (this.bridge) {
+      return new Promise((resolve) => {
+        this.bridge!.emit('context-limit-action', (action: 'compact' | 'abort') => {
+          resolve(action);
+        });
+      });
+    }
+
+    process.stderr.write(
+      chalk.yellow('  Continue? ') +
+      chalk.green('[c]') + chalk.gray(' compact   ') +
+      chalk.red('[a]') + chalk.gray(' abort  ') +
+      chalk.yellow('› '),
+    );
+
+    const answer = readFromTty();
+    if (answer === null) return 'abort';
+    const trimmed = answer.toLowerCase().trim();
+    if (trimmed === 'c' || trimmed === 'compact') return 'compact';
+    return 'abort';
   }
 
   private stopThinkingSpinner(): void {

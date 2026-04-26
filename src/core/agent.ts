@@ -21,6 +21,8 @@ export interface AgentOptions {
   toolCallFormat?: FormatName;
   bridge?: AgentBridge;
   pluginManager?: PluginManager;
+  /** Fraction of maxTokens at which to warn about context limit (0–1, default 0.9). */
+  contextLimitThresholdPct?: number;
 }
 
 export class Agent {
@@ -251,6 +253,16 @@ export class Agent {
           : { ...usage };
       }
 
+      // F-05: Detect context limit (Qwen silent cutoff and threshold-based detection).
+      if (this.detectContextLimit(lastInputTokens, fullText, toolCalls)) {
+        this.renderer.showContextLimitWarning();
+        const action = await this.renderer.promptContextLimitAction();
+        if (action === 'compact') {
+          this.contextWindow.markForCompaction();
+        }
+        break;
+      }
+
       // ── Plugin hook: postRequest (observation only) ──
       if (this.pluginManager) {
         await this.pluginManager.postRequest({
@@ -394,5 +406,36 @@ export class Agent {
     }
 
     return { usage: totalUsage, lastInputTokens };
+  }
+
+  /**
+   * Detect whether the model likely hit its context limit this turn.
+   * Two signals:
+   *   1. Token threshold: input tokens ≥ contextLimitThresholdPct of maxTokens
+   *   2. Truncation heuristic: text present, no tool calls, and response ends
+   *      without terminal punctuation (sentence was cut off mid-stream)
+   */
+  private detectContextLimit(
+    lastInputTokens: number,
+    fullText: string,
+    toolCalls: unknown[],
+  ): boolean {
+    const maxTokens = this.contextWindow.maxTokens;
+    const threshold = this.options.contextLimitThresholdPct ?? 0.9;
+
+    if (maxTokens > 0 && lastInputTokens >= maxTokens * threshold) {
+      return true;
+    }
+
+    // Heuristic: text-only response (no tool calls) ending without punctuation
+    if (toolCalls.length === 0 && fullText.trim().length > 0) {
+      const trimmed = fullText.trimEnd();
+      const lastChar = trimmed[trimmed.length - 1];
+      if (lastChar && !/[.!?:;\n]/.test(lastChar)) {
+        return true;
+      }
+    }
+
+    return false;
   }
 }

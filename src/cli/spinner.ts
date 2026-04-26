@@ -49,6 +49,11 @@ export class Spinner {
     if (this.timer) this.draw();
   }
 
+  /** Update the displayed text label without stopping or restarting the spinner. */
+  updateText(newLabel: string): void {
+    this.label = newLabel;
+  }
+
   /** Stop and clear the spinner line. */
   stop(): void {
     this.clearTimer();

@@ -81,6 +81,8 @@ export interface AgentBridgeEvents {
   'turn-complete': () => void;
   'error': (message: string) => void;
   'input-request': (respond: (input: string) => void) => void;
+  'context-limit-warning': () => void;
+  'context-limit-action': (respond: (action: 'compact' | 'abort') => void) => void;
 }
 
 // ── AgentBridge ─────────────────────────────────────────────────────────────

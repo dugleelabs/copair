@@ -38,13 +38,22 @@ export interface TokenUsage {
 
 export type ApprovalAnswer = 'allow' | 'always' | 'deny' | 'all' | 'similar';
 
+/** Pre-approval diff shown at the approval prompt (before execution). */
+export interface ApprovalDiffPreview {
+  filePath: string;
+  oldContent: string | null;
+  newContent: string;
+  diffText: string;
+}
+
 export interface ApprovalRequest {
   toolName: string;
   input: Record<string, unknown>;
   summary: string;
   index: number;
   total: number;
-  diff?: DiffInfo;
+  /** Pre-approval diff preview (shown before user approves). */
+  diff?: ApprovalDiffPreview | null;
   /** Present when a bash command references a sensitive system path. */
   warning?: string;
   /** Present when a bash command references a path outside the project root. */

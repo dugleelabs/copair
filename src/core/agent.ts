@@ -344,19 +344,7 @@ export class Agent {
 
         // Show rich output for tool results
         if (!result.isError) {
-          if (tc.name === 'edit' && toolInput.old_string && toolInput.new_string) {
-            this.renderer.showDiff(
-              String(toolInput.file_path ?? ''),
-              String(toolInput.old_string),
-              String(toolInput.new_string),
-            );
-          } else if (tc.name === 'write' && toolInput.content) {
-            this.renderer.showDiff(
-              String(toolInput.file_path ?? ''),
-              null,
-              String(toolInput.content),
-            );
-          } else if (tc.name === 'git') {
+          if (tc.name === 'git') {
             const args = String(toolInput.args ?? '').trim();
             const sub = args.split(/\s+/)[0];
             if (sub === 'diff') {

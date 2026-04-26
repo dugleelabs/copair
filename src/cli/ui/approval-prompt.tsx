@@ -1,6 +1,6 @@
 import React from 'react';
 import { Box, Text, useStdout } from 'ink';
-import { DiffView } from './diff-view.js';
+import { SimpleDiff } from './diff-view.js';
 import type { ApprovalRequest, ApprovalAnswer } from './agent-bridge.js';
 
 export interface ApprovalPromptProps {
@@ -77,10 +77,15 @@ export function ApprovalPrompt({ request, onRespond: _onRespond }: ApprovalPromp
           <Text wrap="wrap">{request.summary}</Text>
         </Box>
 
-        {/* Diff preview for file edits */}
+        {/* Diff preview shown before approval (F-03) */}
         {request.diff && (
           <Box marginTop={1}>
-            <DiffView diff={request.diff} maxLines={20} />
+            <SimpleDiff
+              filePath={request.diff.filePath}
+              oldContent={request.diff.oldContent}
+              newContent={request.diff.newContent}
+              maxLines={20}
+            />
           </Box>
         )}
 

@@ -253,16 +253,6 @@ export class Agent {
           : { ...usage };
       }
 
-      // F-05: Detect context limit (Qwen silent cutoff and threshold-based detection).
-      if (this.detectContextLimit(lastInputTokens, fullText, toolCalls)) {
-        this.renderer.showContextLimitWarning();
-        const action = await this.renderer.promptContextLimitAction();
-        if (action === 'compact') {
-          this.contextWindow.markForCompaction();
-        }
-        break;
-      }
-
       // ── Plugin hook: postRequest (observation only) ──
       if (this.pluginManager) {
         await this.pluginManager.postRequest({
@@ -280,6 +270,17 @@ export class Agent {
           model: this._model,
           meta,
         });
+      }
+
+      // F-05: Detect context limit (Qwen silent cutoff and threshold-based detection).
+      // Placed after plugin hooks so observation-only hooks always fire.
+      if (this.detectContextLimit(lastInputTokens, fullText, toolCalls)) {
+        this.renderer.showContextLimitWarning();
+        const action = await this.renderer.promptContextLimitAction();
+        if (action === 'compact') {
+          this.contextWindow.markForCompaction();
+        }
+        break;
       }
 
       if (toolCalls.length === 0) {

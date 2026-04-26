@@ -7,10 +7,11 @@ export interface StatusBarProps {
   bridge: AgentBridge;
   model: string;
   sessionIdentifier?: string;
+  branch?: string;
   visible?: boolean;
 }
 
-export function StatusBar({ bridge, model, sessionIdentifier, visible = true }: StatusBarProps) {
+export function StatusBar({ bridge, model, sessionIdentifier, branch, visible = true }: StatusBarProps) {
   const { stdout } = useStdout();
   const [usage, setUsage] = useState<TokenUsage>({
     inputTokens: 0,
@@ -40,6 +41,7 @@ export function StatusBar({ bridge, model, sessionIdentifier, visible = true }: 
     <Box width="100%" justifyContent="space-between">
       <Box>
         <Text color="cyan" bold>{model}</Text>
+        {branch && <Text color="green"> ({branch})</Text>}
         <Text dimColor> | </Text>
         <Text>{tokens}</Text>
         <Text dimColor> | </Text>

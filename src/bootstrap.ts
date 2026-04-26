@@ -467,6 +467,7 @@ export async function bootstrapCLI(options: BootstrapOptions = {}): Promise<void
     sessionIdentifier: identifierDerived
       ? sessionManager.getMetadata()?.identifier
       : undefined,
+    branch: gitCtx.branch ?? undefined,
     uiConfig: config.ui,
     history: inputHistory,
     completionEngine,

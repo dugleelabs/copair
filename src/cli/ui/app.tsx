@@ -254,6 +254,7 @@ interface CopairAppProps {
   bridge: AgentBridge;
   model: string;
   sessionIdentifier?: string;
+  branch?: string;
   uiConfig?: Partial<UIConfig>;
   history?: string[];
   completionEngine?: CompletionEngine;
@@ -270,6 +271,7 @@ const CopairApp = forwardRef<AppImperativeHandle, CopairAppProps>(function Copai
     bridge,
     model,
     sessionIdentifier,
+    branch,
     uiConfig: uiOverrides,
     history,
     completionEngine,
@@ -576,6 +578,7 @@ const CopairApp = forwardRef<AppImperativeHandle, CopairAppProps>(function Copai
         bridge={bridge}
         model={state.model}
         sessionIdentifier={state.sessionIdentifier}
+        branch={branch}
         visible={config.status_bar}
       />
     </Box>
@@ -589,6 +592,7 @@ export function renderApp(
   model: string,
   options?: {
     sessionIdentifier?: string;
+    branch?: string;
     uiConfig?: Partial<UIConfig>;
     history?: string[];
     completionEngine?: CompletionEngine;
@@ -611,6 +615,7 @@ export function renderApp(
       bridge={bridge}
       model={model}
       sessionIdentifier={options?.sessionIdentifier}
+      branch={options?.branch}
       uiConfig={options?.uiConfig}
       history={options?.history}
       completionEngine={options?.completionEngine}

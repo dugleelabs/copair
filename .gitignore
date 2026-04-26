@@ -10,3 +10,5 @@ dist/
 
 copair
 copair-test-sea
+debug
+*.log

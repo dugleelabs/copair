@@ -67,7 +67,7 @@ export interface AgentBridgeEvents {
   ) => void;
   'diff': (diff: DiffInfo) => void;
   'usage': (usage: TokenUsage) => void;
-  'thinking-start': () => void;
+  'thinking-start': (label?: string) => void;
   'thinking-stop': () => void;
   'turn-complete': () => void;
   'error': (message: string) => void;

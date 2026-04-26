@@ -97,7 +97,11 @@ export class PathGuard {
    * @param mustExist true for read operations (file must exist); false for
    *                  write/edit operations (parent dir must exist).
    */
-  check(rawPath: string, mustExist: boolean): PathGuardResult {
+  check(
+    rawPath: string,
+    mustExist: boolean,
+    opts?: { skipBoundaryCheck?: boolean },
+  ): PathGuardResult {
     let resolved: string;
 
     if (mustExist) {
@@ -123,9 +127,17 @@ export class PathGuard {
       return { allowed: true, resolvedPath: resolved };
     }
 
-    // Outside project root: check deny list (hard deny, not affected by warn mode).
+    // Outside project root: check deny list (hard deny, not affected by warn
+    // mode or skipBoundaryCheck — deny list is always authoritative).
     if (this.isDenied(resolved)) {
       return { allowed: false, reason: 'access-denied' };
+    }
+
+    // Gate-approved cross-repo: caller already has explicit user consent
+    // (allow.yaml match or user click), so skip the default-deny boundary.
+    // The deny list above still applies — users cannot override it.
+    if (opts?.skipBoundaryCheck) {
+      return { allowed: true, resolvedPath: resolved };
     }
 
     // Check allow list (P1 escape hatch for legitimate cross-project access).

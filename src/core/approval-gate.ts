@@ -2,7 +2,7 @@ import { existsSync } from 'node:fs';
 import { resolve as resolvePath, sep } from 'node:path';
 import chalk from 'chalk';
 import type { AllowList } from './allow-list.js';
-import type { AgentBridge, ApprovalAnswer } from '../cli/ui/agent-bridge.js';
+import type { AgentBridge, ApprovalAnswer, ApprovalDiffPreview } from '../cli/ui/agent-bridge.js';
 import { readFromTty } from '../cli/tty-prompt.js';
 import { logger } from './logger.js';
 import type { AuditLog } from './audit-log.js';
@@ -163,7 +163,7 @@ export class ApprovalGate {
    * The agent never calls this. ToolExecutor calls it. The agent only
    * sees the resulting ExecutionResult.
    */
-  async allow(toolName: string, input: Record<string, unknown>): Promise<boolean> {
+  async allow(toolName: string, input: Record<string, unknown>, diffPreview?: ApprovalDiffPreview): Promise<boolean> {
     // Trusted paths bypass even deny mode — scaffolding writes must always work
     if (this.isTrustedPath(toolName, input)) return true;
 
@@ -219,11 +219,11 @@ export class ApprovalGate {
 
     // Bridge-based approval via ink ApprovalHandler
     if (this.bridge) {
-      return this.bridgePrompt(toolName, input, key);
+      return this.bridgePrompt(toolName, input, key, diffPreview);
     }
 
     // Legacy fallback: /dev/tty prompt (synchronous, not stdin)
-    return Promise.resolve(this.legacyPrompt(toolName, input, key, defaultAllow));
+    return Promise.resolve(this.legacyPrompt(toolName, input, key, defaultAllow, diffPreview));
   }
 
   /** Bridge-based approval: emit event and await response from ink UI. */
@@ -231,6 +231,7 @@ export class ApprovalGate {
     toolName: string,
     input: Record<string, unknown>,
     key: string,
+    diffPreview?: ApprovalDiffPreview,
   ): Promise<boolean> {
     return new Promise((resolve) => {
       const summary = formatSummary(toolName, input);
@@ -259,6 +260,7 @@ export class ApprovalGate {
         warning,
         crossRepoBashPath,
         crossRepoReadPath,
+        diff: diffPreview ?? null,
       }, (answer: ApprovalAnswer) => {
         switch (answer) {
           case 'allow':
@@ -304,6 +306,7 @@ export class ApprovalGate {
     input: Record<string, unknown>,
     key: string,
     defaultAllow = false,
+    diffPreview?: ApprovalDiffPreview,
   ): boolean {
     const warning = typeof input._sensitivePathWarning === 'string'
       ? input._sensitivePathWarning
@@ -333,6 +336,10 @@ export class ApprovalGate {
       process.stdout.write(
         chalk.yellow(`\n  \u26A0  This path is outside the current project root — approval required (${crossRepoReadPath})\n`),
       );
+    }
+
+    if (diffPreview?.diffText) {
+      process.stdout.write(chalk.dim(`\n${diffPreview.diffText}\n`));
     }
 
     const summary = formatSummary(toolName, input);

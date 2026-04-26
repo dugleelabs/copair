@@ -1,3 +1,5 @@
+import { existsSync, readFileSync } from 'node:fs';
+import { createPatch } from 'diff';
 import type { ToolRegistry } from '../tools/registry.js';
 import type { ApprovalGate } from './approval-gate.js';
 import { PathGuard } from './path-guard.js';
@@ -7,6 +9,13 @@ import { McpTimeoutError } from '../mcp/client.js';
 import type { AuditLog } from './audit-log.js';
 import { detectSensitivePaths, extractPathTokens } from '../tools/bash.js';
 
+export interface DiffPreview {
+  filePath: string;
+  oldContent: string | null;
+  newContent: string;
+  diffText: string;
+}
+
 export interface ExecutionResult {
   content: string;
   isError?: boolean;
@@ -14,6 +23,34 @@ export interface ExecutionResult {
   denied?: boolean;
   /** Actual tool execution time in ms (excludes approval prompt wait). */
   _durationMs?: number;
+}
+
+function buildUnifiedDiff(oldContent: string, newContent: string, filePath: string): string {
+  return createPatch(filePath, oldContent, newContent, '', '', { context: 3 });
+}
+
+export function computeDiffPreview(
+  toolName: string,
+  input: Record<string, unknown>,
+): DiffPreview | null {
+  if (toolName === 'write') {
+    const filePath = typeof input.file_path === 'string' ? input.file_path : '';
+    const newContent = typeof input.content === 'string' ? input.content : '';
+    if (!filePath) return null;
+    if (!existsSync(filePath)) {
+      return { filePath, oldContent: null, newContent, diffText: `(new file) ${filePath}` };
+    }
+    const oldContent = readFileSync(filePath, 'utf8');
+    return { filePath, oldContent, newContent, diffText: buildUnifiedDiff(oldContent, newContent, filePath) };
+  }
+  if (toolName === 'edit') {
+    const filePath = typeof input.file_path === 'string' ? input.file_path : '';
+    const oldContent = typeof input.old_string === 'string' ? input.old_string : '';
+    const newContent = typeof input.new_string === 'string' ? input.new_string : '';
+    if (!filePath) return null;
+    return { filePath, oldContent, newContent, diffText: buildUnifiedDiff(oldContent, newContent, filePath) };
+  }
+  return null;
 }
 
 /**
@@ -133,7 +170,11 @@ export class ToolExecutor {
       }
     }
 
-    const allowed = await this.gate.allow(toolName, rawInput);
+    // F-03: Compute diff preview before showing approval prompt so the user
+    // sees exactly what will change before clicking allow.
+    const diffPreview = computeDiffPreview(toolName, rawInput);
+
+    const allowed = await this.gate.allow(toolName, rawInput, diffPreview ?? undefined);
     if (!allowed) {
       return {
         content: `Operation denied by user: ${toolName}`,

@@ -7,6 +7,7 @@ import type {
   ToolDefinition,
 } from './interface.js';
 import type { ProviderConfig } from '../config/schema.js';
+import { debugRequest, debugResponse, debugError } from './http-debug.js';
 
 export function toOpenAIMessages(
   messages: Message[],
@@ -159,13 +160,18 @@ export function createOpenAIProvider(
         ? toOpenAITools(tools)
         : undefined;
 
+      const requestPayload = {
+        model: modelConfig.id,
+        messages: openaiMessages,
+        tools: openaiTools,
+        max_tokens: options.maxTokens,
+        temperature: options.temperature,
+      };
+      debugRequest('openai', requestPayload);
+
       if (options.stream && supportsStreaming) {
         const stream = await client.chat.completions.create({
-          model: modelConfig.id,
-          messages: openaiMessages,
-          tools: openaiTools,
-          max_tokens: options.maxTokens,
-          temperature: options.temperature,
+          ...requestPayload,
           stream: true,
           stream_options: { include_usage: true },
         });
@@ -174,11 +180,13 @@ export function createOpenAIProvider(
           number,
           { id: string; name: string; args: string }
         >();
+        let streamedText = '';
 
         for await (const chunk of stream) {
           const delta = chunk.choices?.[0]?.delta;
 
           if (delta?.content) {
+            streamedText += delta.content;
             yield { type: 'text', text: delta.content };
           }
 
@@ -220,6 +228,11 @@ export function createOpenAIProvider(
           }
         }
 
+        debugResponse('openai', {
+          text: streamedText,
+          tool_calls: [...toolCalls.values()],
+        });
+
         for (const [, tc] of toolCalls) {
           yield {
             type: 'tool_call',
@@ -227,13 +240,14 @@ export function createOpenAIProvider(
           };
         }
       } else {
-        const response = await client.chat.completions.create({
-          model: modelConfig.id,
-          messages: openaiMessages,
-          tools: openaiTools,
-          max_tokens: options.maxTokens,
-          temperature: options.temperature,
-        });
+        let response: Awaited<ReturnType<typeof client.chat.completions.create>>;
+        try {
+          response = await client.chat.completions.create(requestPayload);
+        } catch (err) {
+          debugError('openai', err);
+          throw err;
+        }
+        debugResponse('openai', response);
 
         const choice = response.choices[0];
         if (choice.message.content) {

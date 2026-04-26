@@ -182,6 +182,9 @@ export class ApprovalGate {
     }
 
     // File-based allow list — pre-approved operations bypass the prompt.
+    // The allow-list is user-owned config (write-protected from the agent
+    // via PERMISSION_SENSITIVE_FILES) and is the legitimate escape hatch for
+    // cross-repo work; it bypasses even 'always-ask' risk.
     // Exception: new file creation always requires an explicit prompt regardless
     // of allow-list entries. Users cannot accidentally pre-approve writes to
     // files that don't exist yet.
@@ -397,6 +400,13 @@ function sessionKey(toolName: string, input: Record<string, unknown>): string {
   }
   if (toolName === 'write' || toolName === 'edit') {
     const filePath = typeof input.file_path === 'string' ? resolvePath(input.file_path) : '';
+    return filePath ? `${toolName}:${filePath}` : toolName;
+  }
+  // read/glob/grep: path-specific so "always" on one file does not approve
+  // reads to all files (including cross-repo paths) in the same session.
+  if (toolName === 'read' || toolName === 'glob' || toolName === 'grep') {
+    const rawPath = input.file_path ?? input.path ?? input.pattern;
+    const filePath = typeof rawPath === 'string' ? resolvePath(rawPath) : '';
     return filePath ? `${toolName}:${filePath}` : toolName;
   }
   return toolName;

@@ -8,6 +8,7 @@ import type {
 } from './interface.js';
 import { NATIVE_SEARCH_MARKER } from './interface.js';
 import type { ProviderConfig } from '../config/schema.js';
+import { debugRequest, debugResponse, debugError } from './http-debug.js';
 
 function toAnthropicMessages(
   messages: Message[],
@@ -118,21 +119,23 @@ export function createAnthropicProvider(
           .map((b) => b.text)
           .join('\n');
 
+      const requestPayload = {
+        model: modelConfig.id,
+        messages: anthropicMessages,
+        max_tokens: options.maxTokens ?? 8192,
+        ...(options.temperature !== undefined ? { temperature: options.temperature } : {}),
+        ...(systemPrompt ? { system: systemPrompt } : {}),
+        ...(anthropicTools ? { tools: anthropicTools } : {}),
+      };
+      debugRequest('anthropic', requestPayload);
+
       if (options.stream) {
-        const stream = client.messages.stream({
-          model: modelConfig.id,
-          messages: anthropicMessages,
-          max_tokens: options.maxTokens ?? 8192,
-          ...(options.temperature !== undefined
-            ? { temperature: options.temperature }
-            : {}),
-          ...(systemPrompt ? { system: systemPrompt } : {}),
-          ...(anthropicTools ? { tools: anthropicTools } : {}),
-        });
+        const stream = client.messages.stream(requestPayload);
 
         let currentToolId = '';
         let currentToolName = '';
         let currentToolArgs = '';
+        let streamedText = '';
 
         for await (const event of stream) {
           if (
@@ -146,6 +149,7 @@ export function createAnthropicProvider(
 
           if (event.type === 'content_block_delta') {
             if (event.delta.type === 'text_delta') {
+              streamedText += event.delta.text;
               yield { type: 'text', text: event.delta.text };
             } else if (event.delta.type === 'input_json_delta') {
               currentToolArgs += event.delta.partial_json;
@@ -207,6 +211,7 @@ export function createAnthropicProvider(
         }
 
         const finalMessage = await stream.finalMessage();
+        debugResponse('anthropic', finalMessage);
         if (finalMessage.usage) {
           yield {
             type: 'usage',
@@ -217,16 +222,14 @@ export function createAnthropicProvider(
           };
         }
       } else {
-        const response = await client.messages.create({
-          model: modelConfig.id,
-          messages: anthropicMessages,
-          max_tokens: options.maxTokens ?? 8192,
-          ...(options.temperature !== undefined
-            ? { temperature: options.temperature }
-            : {}),
-          ...(systemPrompt ? { system: systemPrompt } : {}),
-          ...(anthropicTools ? { tools: anthropicTools } : {}),
-        });
+        let response: Awaited<ReturnType<typeof client.messages.create>>;
+        try {
+          response = await client.messages.create(requestPayload);
+        } catch (err) {
+          debugError('anthropic', err);
+          throw err;
+        }
+        debugResponse('anthropic', response);
 
         for (const block of response.content) {
           if (block.type === 'text') {

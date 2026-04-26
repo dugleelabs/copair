@@ -204,13 +204,17 @@ export class ToolExecutor {
     const PATH_FIELDS = ['file_path', 'path', 'pattern'] as const;
     // These tools operate on existing files/directories — path must exist.
     const mustExistTools = new Set(['read', 'glob', 'grep']);
+    // If the gate already saw this as a cross-repo read and approved it (via
+    // allow.yaml match or explicit user click), PathGuard must not re-block
+    // the path for being outside the project root. Deny-list still applies.
+    const skipBoundaryCheck = Boolean(input._crossRepoRead);
 
     for (const field of PATH_FIELDS) {
       const raw = input[field];
       if (typeof raw !== 'string') continue;
 
       const mustExist = mustExistTools.has(toolName);
-      const result = this.pathGuard.check(raw, mustExist);
+      const result = this.pathGuard.check(raw, mustExist, { skipBoundaryCheck });
 
       if (!result.allowed) {
         const reason =

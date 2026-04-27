@@ -1,6 +1,6 @@
 {
   "name": "@dugleelabs/copair",
-  "version": "1.6.0",
+  "version": "1.7.0",
   "description": "Model-agnostic AI coding agent for the terminal",
   "type": "module",
   "main": "dist/api.js",

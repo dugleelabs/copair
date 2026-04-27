@@ -135,7 +135,6 @@ export function createAnthropicProvider(
         let currentToolId = '';
         let currentToolName = '';
         let currentToolArgs = '';
-        let streamedText = '';
 
         for await (const event of stream) {
           if (
@@ -149,7 +148,6 @@ export function createAnthropicProvider(
 
           if (event.type === 'content_block_delta') {
             if (event.delta.type === 'text_delta') {
-              streamedText += event.delta.text;
               yield { type: 'text', text: event.delta.text };
             } else if (event.delta.type === 'input_json_delta') {
               currentToolArgs += event.delta.partial_json;

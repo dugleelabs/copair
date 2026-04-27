@@ -226,7 +226,11 @@ function resolveWithRealpath(raw: string, cwd: string): string {
 // ── Glob matching ─────────────────────────────────────────────────────────────
 
 function globMatch(pattern: string, path: string): boolean {
-  return globToRegex(pattern).test(path);
+  // Normalize path separators to '/' so [^/] in the regex correctly excludes
+  // segment boundaries on both POSIX and Windows. realpathSync/resolve return
+  // backslash-separated paths on Windows; without normalization, '*' would
+  // match across directory boundaries (e.g. 'src/*.ts' matching 'src\foo\bar.ts').
+  return globToRegex(pattern.replace(/\\/g, '/')).test(path.replace(/\\/g, '/'));
 }
 
 function globToRegex(pattern: string): RegExp {

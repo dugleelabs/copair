@@ -47,6 +47,8 @@ import { AuditLog } from './core/audit-log.js';
 import { runAuditCommand } from './cli/commands/audit.js';
 import { PluginManager } from './core/plugin-manager.js';
 import type { CopairPlugin } from './plugins/interface.js';
+import { SmallModelHarness } from './core/small-model-harness.js';
+import { readFromTty } from './cli/tty-prompt.js';
 
 // ── Version helper ────────────────────────────────────────────────────────────
 
@@ -284,10 +286,18 @@ export async function bootstrapCLI(options: BootstrapOptions = {}): Promise<void
   const knowledgeBase = new KnowledgeBase(cwd, config.context.knowledge_max_size);
   setKnowledgeBase(knowledgeBase);
 
+  // Determine small-model mode: CLI flag overrides config; config overrides auto-detect
+  const harness = new SmallModelHarness(
+    modelAlias,
+    config.small_models ?? {},
+    cliOpts.smallModel,
+  );
+
   // Set up agent (bridge connects renderer events to ink UI)
   const agent = new Agent(provider, modelAlias, toolRegistry, executor, {
     bridge: agentBridge,
     pluginManager,
+    harness,
     systemPrompt:
       'You are Copair, an AI coding assistant.\n\n' +
       `Environment:\n` +
@@ -567,11 +577,32 @@ export async function bootstrapCLI(options: BootstrapOptions = {}): Promise<void
         return;
       }
 
-      const result = await cmdRegistry.execute(fullInput, ctx);
-      if (!result) {
+      const resolved = cmdRegistry.resolve(fullInput);
+      if (!resolved) {
         agentBridge.emit('error', `Unknown command: /${command}. Type /help for available commands.`);
-      } else if (result.prompt) {
-        await agent.handleMessage(result.prompt);
+        agentBridge.emit('turn-complete');
+        return;
+      }
+
+      const { command: cmd, args: cmdArgs } = resolved;
+      const intake = await cmdRegistry.dispatchWithIntake(
+        cmd,
+        cmdArgs,
+        ctx,
+        harness.isSmallModel,
+        async (prompt: string) => {
+          // Bridge mode: use the input-request event; legacy mode: read from tty
+          if (agentBridge.listenerCount('input-request') > 0) {
+            return new Promise<string>((res) => {
+              agentBridge.emit('input-request', res);
+            });
+          }
+          process.stdout.write(`${prompt}: `);
+          return readFromTty() ?? '';
+        },
+      );
+      if (typeof intake === 'string' && intake) {
+        await agent.handleMessage(intake);
       }
       agentBridge.emit('turn-complete');
     },

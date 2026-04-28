@@ -51,6 +51,15 @@ function parseFrontmatter(content: string): { meta: CommandFrontmatter; body: st
 
   if (argsArray.length > 0) meta['args'] = argsArray;
 
+  // argument-hint shim: if no args: block but argument-hint is present,
+  // synthesize a single non-required arg from the hint text.
+  if (argsArray.length === 0 && typeof meta['argument-hint'] === 'string') {
+    const hint = (meta['argument-hint'] as string).replace(/[<>[\]|]/g, '').trim().split(/\s+/)[0];
+    if (hint) {
+      meta['args'] = [{ name: hint, description: meta['argument-hint'] as string, required: false }];
+    }
+  }
+
   // name is no longer required in frontmatter — caller derives from path
   return {
     meta: meta as unknown as CommandFrontmatter,

@@ -475,6 +475,23 @@ export class Renderer {
     return 'abort';
   }
 
+  showTaskComplete(summary: string): void {
+    process.stderr.write(chalk.green(`\n  ✓  Task complete: ${summary}\n`));
+    this.bridge?.emit('task-complete', { summary });
+  }
+
+  showMaxTurnWarning(limit: number): void {
+    process.stderr.write(
+      chalk.yellow(`\n  ⚠  Maximum tool calls (${limit}) reached. Stopping agent turn.\n`),
+    );
+    this.bridge?.emit('max-turn-warning', { limit });
+  }
+
+  showUnclearSignal(message: string): void {
+    process.stderr.write(chalk.yellow(`\n  ⚠  Model uncertainty: ${message}\n`));
+    this.bridge?.emit('unclear-signal', { message });
+  }
+
   private stopThinkingSpinner(): void {
     if (this.thinkingSpinner) {
       this.thinkingSpinner.stop();

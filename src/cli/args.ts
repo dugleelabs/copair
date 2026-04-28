@@ -20,6 +20,8 @@ export interface CliOptions {
   verbose: boolean;
   debug: boolean;
   resume?: string | true;
+  /** Explicit small-model override: true = force on, false = force off, undefined = auto-detect. */
+  smallModel?: boolean;
 }
 
 export function parseArgs(argv: string[] = process.argv, versionString?: string): CliOptions {
@@ -34,9 +36,17 @@ export function parseArgs(argv: string[] = process.argv, versionString?: string)
     .option('--verbose', 'Enable verbose logging (WARN + INFO)', false)
     .option('--debug', 'Enable debug logging (all levels)', false)
     .option('--resume [identifier]', 'Resume a previous session (use "latest" for most recent)')
+    .option('--small-model', 'Force small-model mode on for this session')
+    .option('--no-small-model', 'Force small-model mode off for this session')
     .parse(argv);
 
   const opts = program.opts();
+
+  // commander sets smallModel=true for --small-model, false for --no-small-model,
+  // and undefined when neither flag is given.
+  let smallModel: boolean | undefined;
+  if (opts.smallModel === true) smallModel = true;
+  else if (opts.smallModel === false) smallModel = false;
 
   return {
     model: opts.model,
@@ -44,5 +54,6 @@ export function parseArgs(argv: string[] = process.argv, versionString?: string)
     verbose: opts.verbose || opts.debug,
     debug: opts.debug || process.env.DEBUG === 'copair',
     resume: opts.resume,
+    smallModel,
   };
 }

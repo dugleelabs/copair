@@ -70,6 +70,10 @@ export class FencedBlockFormatter implements ToolCallFormatter {
     return { toolCalls, remainingText: remainingText.trim() };
   }
 
+  exampleCall(): string {
+    return '```tool_call\n{"name": "read", "arguments": {"file_path": "/path/to/file"}}\n```';
+  }
+
   buildSystemPrompt(tools: ToolDefinition[]): string {
     if (tools.length === 0) return '';
 

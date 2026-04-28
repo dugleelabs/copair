@@ -85,6 +85,16 @@ export class DsmlFormatter implements ToolCallFormatter {
     return { toolCalls, remainingText: remainingText.trim() };
   }
 
+  exampleCall(): string {
+    return (
+      '<｜DSML｜function_calls>\n' +
+      '<｜DSML｜invoke name="read">\n' +
+      '<｜DSML｜parameter name="file_path" string="true">/path/to/file<｜DSML｜parameter>\n' +
+      '</｜DSML｜invoke>\n' +
+      '</｜DSML｜function_calls>'
+    );
+  }
+
   buildSystemPrompt(tools: ToolDefinition[]): string {
     if (tools.length === 0) return '';
 

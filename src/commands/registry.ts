@@ -118,6 +118,44 @@ export class CommandRegistry {
     return { handled: true, prompt: typeof result === 'string' ? result : undefined };
   }
 
+  /**
+   * Dispatch a command with sequential intake for small models.
+   * For large models: calls command.execute directly.
+   * For small models: prompts for each required arg that is missing from args,
+   * substitutes the collected answers, then calls command.execute.
+   */
+  async dispatchWithIntake(
+    command: Command,
+    args: Record<string, string>,
+    context: AgentContext,
+    isSmallModel: boolean,
+    collector: (prompt: string) => Promise<string>,
+  ): Promise<string | void> {
+    // Fill defaults regardless of model size
+    if (command.definition.args) {
+      for (const argDef of command.definition.args) {
+        if (!(argDef.name in args) && argDef.default !== undefined) {
+          args[argDef.name] = argDef.default;
+        }
+      }
+    }
+
+    if (!isSmallModel || !command.definition.args) {
+      return command.execute(args, context);
+    }
+
+    // Small model: prompt for each required arg that is still missing
+    const filled = { ...args };
+    for (const argDef of command.definition.args) {
+      if (argDef.required && !(argDef.name in filled)) {
+        const prompt = argDef.description ?? argDef.name;
+        filled[argDef.name] = await collector(prompt);
+      }
+    }
+
+    return command.execute(filled, context);
+  }
+
   getCompletions(partial: string): string[] {
     const names = Array.from(this.commands.keys());
     return names.filter((n) => n.startsWith(partial)).map((n) => `/${n}`);

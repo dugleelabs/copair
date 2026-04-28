@@ -40,11 +40,32 @@ function parseFrontmatter(content: string): { meta: CommandFrontmatter; body: st
       continue;
     }
 
-    if (inArgs && line.match(/^\s+-\s+name:/)) {
-      const nameMatch = line.match(/name:\s*(.+)/);
-      if (nameMatch) {
+    if (inArgs) {
+      // Start of a new arg item: "  - name: foo"
+      const newArgMatch = line.match(/^\s+-\s+name:\s*(.+)/);
+      if (newArgMatch) {
         argsArray = argsArray ?? [];
-        argsArray.push({ name: nameMatch[1].trim() });
+        argsArray.push({ name: newArgMatch[1].trim() });
+        continue;
+      }
+      // Properties of the current arg item
+      const current = argsArray && argsArray[argsArray.length - 1];
+      if (current) {
+        const descMatch = line.match(/^\s+description:\s*(.*)/);
+        if (descMatch) {
+          current.description = descMatch[1].replace(/^["']|["']$/g, '').trim();
+          continue;
+        }
+        const reqMatch = line.match(/^\s+required:\s*(true|false)/);
+        if (reqMatch) {
+          (current as Record<string, unknown>).required = reqMatch[1] === 'true';
+          continue;
+        }
+        const defMatch = line.match(/^\s+default:\s*(.*)/);
+        if (defMatch) {
+          current.default = defMatch[1].replace(/^["']|["']$/g, '').trim();
+          continue;
+        }
       }
     }
   }

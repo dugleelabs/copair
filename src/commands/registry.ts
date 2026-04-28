@@ -80,7 +80,7 @@ export class CommandRegistry {
     const command = this.commands.get(name);
     if (!command) return null;
 
-    // Parse key=value args + capture positional text as ARGUMENTS
+    // Parse key=value args + capture positional text
     const args: Record<string, string> = {};
     const positional: string[] = [];
     for (const part of parts.slice(1)) {
@@ -93,6 +93,15 @@ export class CommandRegistry {
       }
     }
     if (positional.length > 0) {
+      // Map positional args to named arg definitions in order (skip already-supplied ones)
+      const argDefs = command.definition.args ?? [];
+      let positionalIdx = 0;
+      for (const argDef of argDefs) {
+        if (!(argDef.name in args) && positionalIdx < positional.length) {
+          args[argDef.name] = positional[positionalIdx++];
+        }
+      }
+      // Always set ARGUMENTS for backward-compat ($ARGUMENTS in legacy commands)
       args['ARGUMENTS'] = positional.join(' ');
     }
 

@@ -455,7 +455,11 @@ export class Renderer {
   async promptContextLimitAction(): Promise<'compact' | 'abort'> {
     if (this.bridge) {
       return new Promise((resolve) => {
+        // Safety timeout: if the Ink UI has no handler registered, abort after 30s
+        // rather than hanging the agent loop indefinitely.
+        const timer = setTimeout(() => resolve('abort'), 30_000);
         this.bridge!.emit('context-limit-action', (action: 'compact' | 'abort') => {
+          clearTimeout(timer);
           resolve(action);
         });
       });

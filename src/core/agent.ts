@@ -540,8 +540,10 @@ export class Agent {
       return true;
     }
 
-    // Heuristic: text-only response (no tool calls) ending without punctuation
-    if (toolCalls.length === 0 && fullText.trim().length > 0) {
+    // Heuristic: text-only response (no tool calls) ending without punctuation.
+    // Only applies to long responses (≥ 500 chars) — short completions that end with
+    // a command name or list item are not truncated, just complete without punctuation.
+    if (toolCalls.length === 0 && fullText.trim().length >= 500) {
       const trimmed = fullText.trimEnd();
       const lastChar = trimmed[trimmed.length - 1];
       if (lastChar && !/[.!?:;\n]/.test(lastChar)) {

@@ -140,11 +140,13 @@ export class CommandRegistry {
       }
     }
 
-    if (!isSmallModel || !command.definition.args) {
+    if (!command.definition.args) {
       return command.execute(args, context);
     }
 
-    // Small model: prompt for each required arg that is still missing
+    // Always collect missing required args (for all models — large models cannot infer
+    // required args from missing placeholders any better than small ones).
+    // Optional args are never collected; they remain absent and interpolate to ''.
     const filled = { ...args };
     for (const argDef of command.definition.args) {
       if (argDef.required && !(argDef.name in filled)) {

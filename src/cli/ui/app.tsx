@@ -4,6 +4,7 @@ import type { AgentBridge, DiffInfo, TokenUsage, ToolCompleteInfo } from './agen
 import { BorderedInput } from './bordered-input.js';
 import { StatusBar } from './status-bar.js';
 import { ApprovalHandler } from './approval-handler.js';
+import { InputRequestHandler } from './input-request-handler.js';
 import { DiffView } from './diff-view.js';
 import { ActivityBar } from './activity-bar.js';
 import { SuggestionHint } from './suggestion-hint.js';
@@ -33,7 +34,7 @@ const DEFAULT_UI_CONFIG: UIConfig = {
   tab_completion: true,
 };
 
-type AppPhase = 'input' | 'thinking' | 'streaming' | 'approval' | 'idle';
+type AppPhase = 'input' | 'thinking' | 'streaming' | 'approval' | 'idle' | 'slash-command';
 
 interface AppState {
   phase: AppPhase;
@@ -477,6 +478,9 @@ const CopairApp = forwardRef<AppImperativeHandle, CopairAppProps>(function Copai
       setHistorySearchVisible(true);
       return;
     }
+    // Hide BorderedInput while the command runs so InputRequestHandler can
+    // capture keystrokes without interference. turn-complete resets to 'input'.
+    setState((prev) => ({ ...prev, phase: 'slash-command' }));
     await onSlashCommand?.(command, args);
   }, [onSlashCommand]);
 
@@ -550,6 +554,9 @@ const CopairApp = forwardRef<AppImperativeHandle, CopairAppProps>(function Copai
 
       {/* Approval prompt */}
       <ApprovalHandler bridge={bridge} />
+
+      {/* Inline arg collection for slash commands (dispatchWithIntake) */}
+      <InputRequestHandler bridge={bridge} />
 
       {/* Notification (e.g. Ctrl+C warning) */}
       {state.notification && (

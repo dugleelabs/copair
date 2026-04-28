@@ -594,7 +594,7 @@ export async function bootstrapCLI(options: BootstrapOptions = {}): Promise<void
           // Bridge mode: use the input-request event; legacy mode: read from tty
           if (agentBridge.listenerCount('input-request') > 0) {
             return new Promise<string>((res) => {
-              agentBridge.emit('input-request', res);
+              agentBridge.emit('input-request', prompt, res);
             });
           }
           process.stdout.write(`${prompt}: `);

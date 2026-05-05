@@ -52,6 +52,7 @@ export class WorkflowEngine {
 
         let iterCount = 0;
         const maxIter = step.max_iterations ? parseInt(step.max_iterations, 10) : 1;
+        let onMaxFired = false;
 
         while (iterCount < maxIter) {
           if (this.cancelled) break;
@@ -59,7 +60,7 @@ export class WorkflowEngine {
           const result = await executeStep(step, context, this.executors);
           context.steps[step.id] = result;
 
-          // Handle loop_until
+          // Handle loop_until: break early if condition met (before max iterations)
           if (step.loop_until && iterCount < maxIter - 1) {
             const loopExprRaw = step.loop_until.replace(
               /\{\{exit_code\}\}/g,
@@ -73,12 +74,34 @@ export class WorkflowEngine {
 
           iterCount++;
 
-          if (iterCount >= maxIter && step.on_max_iterations === 'report') {
-            const reportStep = stepsById.get('report');
-            if (reportStep) {
-              await executeStep(reportStep, context, this.executors);
+          // F-17: use the configured step id, not the hardcoded string 'report'
+          if (iterCount >= maxIter && step.on_max_iterations) {
+            const onMaxStep = stepsById.get(step.on_max_iterations);
+            if (onMaxStep) {
+              const onMaxIdx = stepOrder.indexOf(step.on_max_iterations);
+              process.stderr.write(
+                chalk.gray(`\n[step ${onMaxIdx + 1}/${total}] ${step.on_max_iterations}\n`),
+              );
+              await executeStep(onMaxStep, context, this.executors);
+              onMaxFired = true;
             }
             break;
+          }
+        }
+
+        // F-18: if step has on_max_iterations, skip past it in sequential flow —
+        // it either just ran above (onMaxFired) or the loop exited early and it
+        // should be skipped. Either way, the sequential re-execution is wrong.
+        if (step.on_max_iterations) {
+          const onMaxIdx = stepOrder.indexOf(step.on_max_iterations);
+          if (onMaxIdx !== -1) {
+            if (!onMaxFired) {
+              process.stderr.write(
+                chalk.gray(`\n[step ${onMaxIdx + 1}/${total}] ${step.on_max_iterations} [skipped]\n`),
+              );
+            }
+            stepIndex = onMaxIdx + 1;
+            continue;
           }
         }
 
@@ -89,6 +112,14 @@ export class WorkflowEngine {
           if (jumpId === 'done') break;
           const jumpIdx = stepOrder.indexOf(jumpId);
           if (jumpIdx !== -1) {
+            // F-19: print [skipped] for intermediate steps on forward jumps
+            if (jumpIdx > stepIndex + 1) {
+              for (let i = stepIndex + 1; i < jumpIdx; i++) {
+                process.stderr.write(
+                  chalk.gray(`\n[step ${i + 1}/${total}] ${workflow.steps[i].id} [skipped]\n`),
+                );
+              }
+            }
             stepIndex = jumpIdx;
             continue;
           }

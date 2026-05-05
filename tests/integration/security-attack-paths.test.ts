@@ -66,6 +66,7 @@ describe('Security — attack-path integration (T-21)', () => {
     projectRoot = makeTempGitRepo();
     stdoutSpy = vi.spyOn(process.stdout, 'write').mockImplementation(() => true);
     stderrSpy = vi.spyOn(process.stderr, 'write').mockImplementation(() => true);
+    vi.spyOn(ttyPromptModule, 'readFromTty').mockReturnValue(null);
   });
 
   afterEach(() => {

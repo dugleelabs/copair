@@ -1,6 +1,33 @@
 import chalk from 'chalk';
-import type { WorkflowDefinition, WorkflowContext } from './interface.js';
+import type { WorkflowDefinition, WorkflowContext, StepType } from './interface.js';
 import { executeStep, type StepExecutors } from './steps.js';
+
+// ── Render helpers ────────────────────────────────────────────────────────────
+
+function typeBadge(type: StepType): string {
+  switch (type) {
+    case 'shell':     return chalk.blue('sh');
+    case 'prompt':    return chalk.magenta('ai');
+    case 'command':   return chalk.cyan('cmd');
+    case 'condition': return chalk.yellow('if');
+    case 'output':    return chalk.dim('out');
+    default:          return chalk.dim(type);
+  }
+}
+
+function stepLine(
+  prefix: string,
+  num: number,
+  total: number,
+  id: string,
+  badge: string,
+  suffix = '',
+): string {
+  const counter = chalk.dim(`[${String(num).padStart(String(total).length)}/${total}]`);
+  return `${prefix} ${counter} ${id}  ${badge}${suffix}\n`;
+}
+
+// ── Engine ────────────────────────────────────────────────────────────────────
 
 export class WorkflowEngine {
   private cancelled = false;
@@ -26,6 +53,12 @@ export class WorkflowEngine {
 
     const context: WorkflowContext = { inputs, steps: {} };
 
+    // Workflow header
+    const total = workflow.steps.length;
+    process.stderr.write(
+      `\n  ${chalk.bold('Workflow')}  ${chalk.cyan(workflow.name)}  ${chalk.dim(`·  ${total} step${total === 1 ? '' : 's'}`)}\n\n`,
+    );
+
     // Handle Ctrl+C
     const sigintHandler = () => {
       this.cancelled = true;
@@ -45,10 +78,7 @@ export class WorkflowEngine {
 
         const step = workflow.steps[stepIndex];
         const stepNum = stepIndex + 1;
-        const total = workflow.steps.length;
-        process.stderr.write(
-          chalk.gray(`\n[step ${stepNum}/${total}] ${step.id}\n`),
-        );
+        const badge = typeBadge(step.type);
 
         let iterCount = 0;
         const maxIter = step.max_iterations ? parseInt(step.max_iterations, 10) : 1;
@@ -57,8 +87,20 @@ export class WorkflowEngine {
         while (iterCount < maxIter) {
           if (this.cancelled) break;
 
+          const attemptSuffix =
+            maxIter > 1 ? chalk.dim(`  · attempt ${iterCount + 1}/${maxIter}`) : '';
+          process.stderr.write(
+            `\n` + stepLine(chalk.dim('▷'), stepNum, total, step.id, badge, attemptSuffix),
+          );
+
+          const t0 = Date.now();
           const result = await executeStep(step, context, this.executors);
           context.steps[step.id] = result;
+          const elapsed = Date.now() - t0;
+
+          process.stderr.write(
+            stepLine(chalk.green('✓'), stepNum, total, step.id, badge, chalk.dim(`  ${elapsed}ms`)),
+          );
 
           // Handle loop_until: break early if condition met (before max iterations)
           if (step.loop_until && iterCount < maxIter - 1) {
@@ -79,10 +121,15 @@ export class WorkflowEngine {
             const onMaxStep = stepsById.get(step.on_max_iterations);
             if (onMaxStep) {
               const onMaxIdx = stepOrder.indexOf(step.on_max_iterations);
+              const onMaxBadge = typeBadge(onMaxStep.type);
               process.stderr.write(
-                chalk.gray(`\n[step ${onMaxIdx + 1}/${total}] ${step.on_max_iterations}\n`),
+                `\n` + stepLine(chalk.dim('▷'), onMaxIdx + 1, total, step.on_max_iterations, onMaxBadge),
               );
+              const t1 = Date.now();
               await executeStep(onMaxStep, context, this.executors);
+              process.stderr.write(
+                stepLine(chalk.green('✓'), onMaxIdx + 1, total, step.on_max_iterations, onMaxBadge, chalk.dim(`  ${Date.now() - t1}ms`)),
+              );
               onMaxFired = true;
             }
             break;
@@ -96,8 +143,10 @@ export class WorkflowEngine {
           const onMaxIdx = stepOrder.indexOf(step.on_max_iterations);
           if (onMaxIdx !== -1) {
             if (!onMaxFired) {
+              const onMaxStep = stepsById.get(step.on_max_iterations);
+              const onMaxBadge = onMaxStep ? typeBadge(onMaxStep.type) : chalk.dim('?');
               process.stderr.write(
-                chalk.gray(`\n[step ${onMaxIdx + 1}/${total}] ${step.on_max_iterations} [skipped]\n`),
+                `\n` + stepLine(chalk.dim('─'), onMaxIdx + 1, total, step.on_max_iterations, onMaxBadge, chalk.dim('  [skipped]')),
               );
             }
             stepIndex = onMaxIdx + 1;
@@ -115,8 +164,9 @@ export class WorkflowEngine {
             // F-19: print [skipped] for intermediate steps on forward jumps
             if (jumpIdx > stepIndex + 1) {
               for (let i = stepIndex + 1; i < jumpIdx; i++) {
+                const skippedStep = workflow.steps[i];
                 process.stderr.write(
-                  chalk.gray(`\n[step ${i + 1}/${total}] ${workflow.steps[i].id} [skipped]\n`),
+                  `\n` + stepLine(chalk.dim('─'), i + 1, total, skippedStep.id, typeBadge(skippedStep.type), chalk.dim('  [skipped]')),
                 );
               }
             }

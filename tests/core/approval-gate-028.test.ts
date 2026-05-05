@@ -3,12 +3,13 @@
  * T-A19: F-01 session key path-specificity and allow-list new-file guard
  * T-A22: F-04 tiered read approval and sensitive path exception
  */
-import { describe, it, expect, vi, beforeEach } from 'vitest';
+import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import { tmpdir } from 'node:os';
 import { mkdtempSync, writeFileSync, mkdirSync } from 'node:fs';
 import { join } from 'node:path';
 import { ApprovalGate } from '../../src/core/approval-gate.js';
 import { AllowList } from '../../src/core/allow-list.js';
+import * as ttyPromptModule from '../../src/cli/tty-prompt.js';
 
 // ── Helpers ──────────────────────────────────────────────────────────────────
 
@@ -38,6 +39,11 @@ describe('ApprovalGate — allow-list new-file guard (T-A19)', () => {
     tmpDir = mkdtempSync(join(tmpdir(), 'copair-test-'));
     existingFile = join(tmpDir, 'existing.ts');
     writeFileSync(existingFile, '// existing');
+    vi.spyOn(ttyPromptModule, 'readFromTty').mockReturnValue(null);
+  });
+
+  afterEach(() => {
+    vi.restoreAllMocks();
   });
 
   it('allow-list does NOT auto-approve write to a non-existent file', async () => {
@@ -69,6 +75,13 @@ describe('ApprovalGate — allow-list new-file guard (T-A19)', () => {
 // ── T-A22: Tiered read approval ───────────────────────────────────────────────
 
 describe('ApprovalGate — tiered read approval (T-A22)', () => {
+  beforeEach(() => {
+    vi.spyOn(ttyPromptModule, 'readFromTty').mockReturnValue(null);
+  });
+
+  afterEach(() => {
+    vi.restoreAllMocks();
+  });
   it('classifies intra-repo read as safe', () => {
     const gate = makeGate();
     expect(gate.classify('read', { file_path: '/project/src/foo.ts' })).toBe('safe');

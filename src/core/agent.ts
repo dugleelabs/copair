@@ -13,6 +13,9 @@ import type { FormatName } from './formats/index.js';
 import { resolveFormatter, buildStreamingFilter, StreamingMarkupFilter } from './formats/index.js';
 import type { AgentBridge } from '../cli/ui/agent-bridge.js';
 import type { PluginManager } from './plugin-manager.js';
+import type { SmallModelHarness } from './small-model-harness.js';
+import { askUserTool } from '../tools/ask-user.js';
+import { taskCompleteTool } from '../tools/task-complete.js';
 
 export interface AgentOptions {
   systemPrompt?: string;
@@ -23,6 +26,7 @@ export interface AgentOptions {
   pluginManager?: PluginManager;
   /** Fraction of maxTokens at which to warn about context limit (0–1, default 0.9). */
   contextLimitThresholdPct?: number;
+  harness?: SmallModelHarness;
 }
 
 export class Agent {
@@ -37,6 +41,7 @@ export class Agent {
   private formatter: ToolCallFormatter;
   private textFilter: StreamingMarkupFilter;
   private pluginManager?: PluginManager;
+  private harness?: SmallModelHarness;
 
   constructor(
     provider: Provider,
@@ -56,6 +61,7 @@ export class Agent {
     this.formatter = resolveFormatter(provider.name, model, options.toolCallFormat);
     this.textFilter = buildStreamingFilter(this.formatter);
     this.pluginManager = options.pluginManager;
+    this.harness = options.harness;
   }
 
   get model(): string {
@@ -117,7 +123,11 @@ export class Agent {
     /** Input tokens from the last API call — reflects actual context window usage. */
     lastInputTokens: number;
   }> {
-    this.conversation.appendText('user', userInput);
+    const reminder = this.harness?.getPerTurnReminder();
+    const formatHint = this.harness?.getFormatHint(this.formatter);
+    const preamble = [formatHint, reminder].filter(Boolean).join('\n\n');
+    const messageContent = preamble ? `${preamble}\n\n${userInput}` : userInput;
+    this.conversation.appendText('user', messageContent);
 
     let totalUsage: { inputTokens: number; outputTokens: number } | null = null;
     let lastInputTokens = 0;
@@ -128,6 +138,10 @@ export class Agent {
     // model can fall back to the provider's built-in search capability.
     let agentWebSearchFailed = false;
 
+    // Small model tool-call cap — Infinity for large models
+    let toolCallCount = 0;
+    const maxToolCalls = this.harness?.isSmallModel ? (this.harness.maxToolCalls) : Infinity;
+
     // Agent loop — keep calling provider until no more tool calls
     while (true) {
       const messages = await this.contextWindow.checkAndTruncate(
@@ -135,7 +149,12 @@ export class Agent {
         this.provider,
       );
 
-      const allTools = this.toolRegistry.getAllDefinitions();
+      const registryTools = this.toolRegistry.getAllDefinitions();
+      // ask_user and task_complete are injected into the tool list for small models only.
+      // They are intercepted in the loop below and never reach the executor.
+      const allTools = this.harness?.isSmallModel
+        ? [...registryTools, askUserTool.definition, taskCompleteTool.definition]
+        : registryTools;
 
       // If the agent web search failed and the provider supports native search,
       // replace the `web_search` tool with the sentinel that triggers native fallback.
@@ -166,7 +185,8 @@ export class Agent {
         ? 'When the user asks you to search the web, or requests current/up-to-date information, you MUST call the web_search tool. Never answer such queries from training knowledge alone — always invoke the tool and base your response on its results.'
         : undefined;
 
-      const systemPrompt = [INJECTION_PREAMBLE, this.options.systemPrompt, toolSystemPrompt, webSearchHint]
+      const smallModelAddition = this.harness?.getSystemPromptAddition();
+      const systemPrompt = [INJECTION_PREAMBLE, this.options.systemPrompt, smallModelAddition, toolSystemPrompt, webSearchHint]
         .filter(Boolean)
         .join('\n\n') || undefined;
 
@@ -272,6 +292,16 @@ export class Agent {
         });
       }
 
+      // F-10: UNCLEAR: signal detection — only for small models
+      if (this.harness?.isSmallModel && fullText) {
+        const unclearMatches = fullText.match(/^UNCLEAR:\s+.+/gm);
+        if (unclearMatches) {
+          for (const line of unclearMatches) {
+            this.renderer.showUnclearSignal(line.replace(/^UNCLEAR:\s+/, ''));
+          }
+        }
+      }
+
       // F-05: Detect context limit (Qwen silent cutoff and threshold-based detection).
       // Placed after plugin hooks so observation-only hooks always fire.
       if (this.detectContextLimit(lastInputTokens, fullText, toolCalls)) {
@@ -310,9 +340,63 @@ export class Agent {
       // execute remaining tools. The denial is final: return to REPL.
       const toolResults: ContentBlock[] = [];
       let denied = false;
+      let taskCompleted = false;
       for (const tc of toolCalls) {
+        toolCallCount++;
+
+        // Small model max-turn guard
+        if (toolCallCount > maxToolCalls) {
+          this.renderer.showMaxTurnWarning(maxToolCalls);
+          // Stub out remaining tool results so the API conversation stays valid
+          for (let i = toolCalls.indexOf(tc); i < toolCalls.length; i++) {
+            toolResults.push({
+              type: 'tool_result',
+              toolUseId: toolCalls[i].id,
+              content: 'Aborted: maximum tool calls reached.',
+              isError: true,
+            });
+          }
+          denied = true;
+          break;
+        }
+
         const toolInput = JSON.parse(tc.arguments || '{}') as Record<string, unknown>;
         const label = formatToolCallFromInput(tc.name, toolInput);
+
+        // Intercept ask_user: collect an answer from the user and inject as tool result
+        if (tc.name === 'ask_user') {
+          const question = String(toolInput.question ?? '');
+          const answer = await this.collectUserAnswer(question);
+          toolResults.push({
+            type: 'tool_result',
+            toolUseId: tc.id,
+            content: answer,
+          });
+          continue;
+        }
+
+        // Intercept task_complete: signal done and break the outer loop
+        if (tc.name === 'task_complete') {
+          const summary = String(toolInput.summary ?? '');
+          this.renderer.showTaskComplete(summary);
+          // Stub out this and any remaining tool results
+          toolResults.push({
+            type: 'tool_result',
+            toolUseId: tc.id,
+            content: `Task marked complete: ${summary}`,
+          });
+          const currentIdx = toolCalls.indexOf(tc);
+          for (let i = currentIdx + 1; i < toolCalls.length; i++) {
+            toolResults.push({
+              type: 'tool_result',
+              toolUseId: toolCalls[i].id,
+              content: 'Aborted: task_complete was called.',
+              isError: true,
+            });
+          }
+          taskCompleted = true;
+          break;
+        }
 
         // Spinner starts only after the approval gate passes (via callback)
         // so it doesn't overlap with the approval prompt.
@@ -402,11 +486,39 @@ export class Agent {
       // Even on denial, every tool_use must have a matching tool_result.
       this.conversation.append('user', toolResults);
 
-      // Denial aborts the entire agent turn — return to REPL immediately
-      if (denied) break;
+      // task_complete or max-turn exceeded — end the agent turn
+      if (taskCompleted || denied) break;
     }
 
     return { usage: totalUsage, lastInputTokens };
+  }
+
+  /** Prompt the user for input and return their answer (used by ask_user intercept). */
+  private async collectUserAnswer(question: string): Promise<string> {
+    process.stdout.write(`\n[copair] ${question}\n> `);
+    return new Promise((resolve) => {
+      const chunks: Buffer[] = [];
+      const onData = (chunk: Buffer) => {
+        const text = chunk.toString();
+        if (text.includes('\n')) {
+          chunks.push(Buffer.from(text.split('\n')[0]));
+          process.stdin.removeListener('data', onData);
+          resolve(Buffer.concat(chunks).toString().trim());
+        } else {
+          chunks.push(chunk);
+        }
+      };
+      process.stdin.once('readable', () => {
+        process.stdin.on('data', onData);
+      });
+      // If stdin is already flowing, attach directly
+      if (process.stdin.readableFlowing) {
+        process.stdin.on('data', onData);
+      } else {
+        process.stdin.resume();
+        process.stdin.on('data', onData);
+      }
+    });
   }
 
   /**
@@ -428,8 +540,10 @@ export class Agent {
       return true;
     }
 
-    // Heuristic: text-only response (no tool calls) ending without punctuation
-    if (toolCalls.length === 0 && fullText.trim().length > 0) {
+    // Heuristic: text-only response (no tool calls) ending without punctuation.
+    // Only applies to long responses (≥ 500 chars) — short completions that end with
+    // a command name or list item are not truncated, just complete without punctuation.
+    if (toolCalls.length === 0 && fullText.trim().length >= 500) {
       const trimmed = fullText.trimEnd();
       const lastChar = trimmed[trimmed.length - 1];
       if (lastChar && !/[.!?:;\n]/.test(lastChar)) {

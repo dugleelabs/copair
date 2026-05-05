@@ -97,6 +97,13 @@ export const NetworkConfigSchema = z.object({
   provider_timeout_ms: z.number().int().positive().default(120_000),
 });
 
+export const SmallModelsConfigSchema = z.object({
+  /** Model ID substrings that identify small models. When set, replaces the built-in default list. */
+  model_ids: z.array(z.string()).optional(),
+  /** Maximum number of tool calls permitted per agent turn for small models (default: 20). */
+  max_tool_calls: z.number().int().positive().optional(),
+});
+
 export const CopairConfigSchema = z.object({
   version: z.number().int().positive(),
   default_model: z.string().optional(),
@@ -112,6 +119,7 @@ export const CopairConfigSchema = z.object({
   ui: UIConfigSchema.default(() => UIConfigSchema.parse({})),
   security: SecurityConfigSchema.optional(),
   network: NetworkConfigSchema.optional(),
+  small_models: SmallModelsConfigSchema.optional(),
 });
 
 export type CopairConfig = z.infer<typeof CopairConfigSchema>;
@@ -123,3 +131,4 @@ export type KnowledgeConfig = z.infer<typeof KnowledgeConfigSchema>;
 export type UIConfig = z.infer<typeof UIConfigSchema>;
 export type SecurityConfig = z.infer<typeof SecurityConfigSchema>;
 export type NetworkConfig = z.infer<typeof NetworkConfigSchema>;
+export type SmallModelsConfig = z.infer<typeof SmallModelsConfigSchema>;

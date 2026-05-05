@@ -12,3 +12,9 @@ copair
 copair-test-sea
 debug
 *.log
+
+spec
+
+.claude
+
+.DS_Store

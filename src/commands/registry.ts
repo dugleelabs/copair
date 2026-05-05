@@ -80,7 +80,7 @@ export class CommandRegistry {
     const command = this.commands.get(name);
     if (!command) return null;
 
-    // Parse key=value args + capture positional text as ARGUMENTS
+    // Parse key=value args + capture positional text
     const args: Record<string, string> = {};
     const positional: string[] = [];
     for (const part of parts.slice(1)) {
@@ -93,6 +93,15 @@ export class CommandRegistry {
       }
     }
     if (positional.length > 0) {
+      // Map positional args to named arg definitions in order (skip already-supplied ones)
+      const argDefs = command.definition.args ?? [];
+      let positionalIdx = 0;
+      for (const argDef of argDefs) {
+        if (!(argDef.name in args) && positionalIdx < positional.length) {
+          args[argDef.name] = positional[positionalIdx++];
+        }
+      }
+      // Always set ARGUMENTS for backward-compat ($ARGUMENTS in legacy commands)
       args['ARGUMENTS'] = positional.join(' ');
     }
 
@@ -116,6 +125,46 @@ export class CommandRegistry {
 
     const result = await command.execute(args, context);
     return { handled: true, prompt: typeof result === 'string' ? result : undefined };
+  }
+
+  /**
+   * Dispatch a command with sequential intake for small models.
+   * For large models: calls command.execute directly.
+   * For small models: prompts for each required arg that is missing from args,
+   * substitutes the collected answers, then calls command.execute.
+   */
+  async dispatchWithIntake(
+    command: Command,
+    args: Record<string, string>,
+    context: AgentContext,
+    isSmallModel: boolean,
+    collector: (prompt: string) => Promise<string>,
+  ): Promise<string | void> {
+    // Fill defaults regardless of model size
+    if (command.definition.args) {
+      for (const argDef of command.definition.args) {
+        if (!(argDef.name in args) && argDef.default !== undefined) {
+          args[argDef.name] = argDef.default;
+        }
+      }
+    }
+
+    if (!command.definition.args) {
+      return command.execute(args, context);
+    }
+
+    // Always collect missing required args (for all models — large models cannot infer
+    // required args from missing placeholders any better than small ones).
+    // Optional args are never collected; they remain absent and interpolate to ''.
+    const filled = { ...args };
+    for (const argDef of command.definition.args) {
+      if (argDef.required && !(argDef.name in filled)) {
+        const prompt = argDef.description ?? argDef.name;
+        filled[argDef.name] = await collector(prompt);
+      }
+    }
+
+    return command.execute(filled, context);
   }
 
   getCompletions(partial: string): string[] {

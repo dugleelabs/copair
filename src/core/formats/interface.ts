@@ -19,4 +19,6 @@ export interface ToolCallFormatter {
   readonly suppressAfterMatch?: boolean;
   parse(text: string): { toolCalls: ParsedToolCall[]; remainingText: string };
   buildSystemPrompt(tools: ToolDefinition[]): string;
+  /** Return a minimal example tool call in this formatter's markup language. */
+  exampleCall(): string;
 }

@@ -37,6 +37,10 @@ export class QwenXmlFormatter implements ToolCallFormatter {
     return { toolCalls, remainingText: remainingText.trim() };
   }
 
+  exampleCall(): string {
+    return '<tool_call>\n{"name": "read", "arguments": {"file_path": "/path/to/file"}}\n</tool_call>';
+  }
+
   buildSystemPrompt(tools: ToolDefinition[]): string {
     if (tools.length === 0) return '';
 

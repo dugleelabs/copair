@@ -2,6 +2,52 @@
 
 All notable changes to copair are documented here.
 
+## [Unreleased] — Small Model Harness and Command Adoption (spec 028 Phase B)
+
+### Added
+
+- **`SmallModelHarness` (F-08/F-12/F-15)** — New `SmallModelHarness` class auto-detects whether the active model is a small/local model by matching its ID against a default list (`qwen`, `llama-3.x`, `mistral-7b`, `phi-3`, `deepseek-coder-1.3b`) and can be forced on/off via `--small-model` / `--no-small-model` CLI flags or the new `small_models.model_ids` config block. When active, injects a 4-rule system prompt addition, a per-turn reminder, and per-turn tool-call format examples to improve instruction-following on resource-constrained models.
+
+- **`ask_user` tool (F-09)** — Small models can now call `ask_user(question)` when they need clarification before proceeding. The tool call is intercepted in the agent (never reaches the executor), the question is written to stdout, the user's answer is read from tty, and the answer is fed back as a tool result. The tool is only advertised to small models; large models already handle ambiguity without it.
+
+- **`task_complete` tool (F-10)** — Small models signal task completion by calling `task_complete(summary)` instead of relying on the host to infer termination. The agent intercepts the call, shows a green `✓ Task complete: …` message, stubs tool results for any co-batched calls, and breaks the turn loop cleanly. This removes the need for the host to guess when a small model has finished.
+
+- **`UNCLEAR:` uncertainty signal (F-10)** — If a small model emits a line starting with `UNCLEAR: `, the agent picks it up after rendering and calls `renderer.showUnclearSignal()`, which displays a yellow `⚠ Model uncertainty: …` line. This surfaces model uncertainty explicitly rather than leaving the user to interpret a confused response.
+
+- **Max-turn guard (F-11)** — A per-session tool-call counter now enforces `small_models.max_tool_calls` (default 20) for small models. On breach, a yellow warning is shown and the turn loop terminates, preventing infinite loops caused by small models repeatedly emitting malformed tool calls.
+
+- **Per-turn tool-call format reinforcement (F-12)** — All `ToolCallFormatter` implementations (`qwen-xml`, `dsml`, `fenced-block`) now expose `exampleCall()` returning a minimal, self-contained tool call example. `SmallModelHarness.getFormatHint()` calls this to prepend a `Format reminder` to each user message turn, reducing format drift mid-session.
+
+- **Sequential intake for slash commands (F-13)** — `CommandRegistry.dispatchWithIntake()` collects any missing *required* args via a tty `collector` callback before dispatching the command. This applies to all model sizes, so `feature_context` and similar required args are never left as unsubstituted `{{placeholders}}` in the rendered prompt.
+
+- **`argument-hint` compatibility shim (F-14)** — Legacy commands using the old `argument-hint: <hint>` frontmatter now work without modification. The loader synthesizes a non-required `ArgDefinition` from the hint text so the command continues to function. Authors should migrate to the explicit `args:` contract (see below).
+
+- **Command authoring contract (F-14)** — Commands can now declare named arguments in frontmatter:
+  ```yaml
+  args:
+    - name: feature_context
+      description: "Brief context about the feature"
+      required: true
+  ```
+  Use `{{arg_name}}` in the command body; `!`shell command`` executes at dispatch time and injects live values. See `docs/command-authoring.md` in `claude-spec-driven-sdlc` for the full guide.
+
+- **New config keys**:
+  ```yaml
+  small_models:
+    model_ids: [qwen, my-custom-model]  # replaces (not extends) defaults
+    max_tool_calls: 20                   # cap before max-turn warning fires
+  ```
+
+### Fixed
+
+- **Truncation heuristic false positive** — `detectContextLimit()`'s mid-sentence truncation heuristic now requires the response to be at least 500 characters before triggering. Short completion messages (e.g. "Run `/spec:approve requirements` when ready") no longer falsely trigger a context-limit warning.
+
+- **`promptContextLimitAction()` bridge hang** — Added a 30-second safety timeout to the bridge-mode context-limit action prompt. Previously, if no Ink UI listener was registered for `context-limit-action`, the promise would hang indefinitely; it now resolves to `'abort'` after 30 seconds.
+
+- **Required arg substitution for all model sizes** — `dispatchWithIntake()` previously skipped arg collection for large models, leaving required args unsubstituted. It now collects missing required args regardless of model size. Optional args are never collected.
+
+---
+
 ## [Unreleased] — Bug Fixes, Security, and UX Polish (spec 028 Phase A)
 
 ### Security

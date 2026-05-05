@@ -455,7 +455,11 @@ export class Renderer {
   async promptContextLimitAction(): Promise<'compact' | 'abort'> {
     if (this.bridge) {
       return new Promise((resolve) => {
+        // Safety timeout: if the Ink UI has no handler registered, abort after 30s
+        // rather than hanging the agent loop indefinitely.
+        const timer = setTimeout(() => resolve('abort'), 30_000);
         this.bridge!.emit('context-limit-action', (action: 'compact' | 'abort') => {
+          clearTimeout(timer);
           resolve(action);
         });
       });
@@ -473,6 +477,23 @@ export class Renderer {
     const trimmed = answer.toLowerCase().trim();
     if (trimmed === 'c' || trimmed === 'compact') return 'compact';
     return 'abort';
+  }
+
+  showTaskComplete(summary: string): void {
+    process.stderr.write(chalk.green(`\n  ✓  Task complete: ${summary}\n`));
+    this.bridge?.emit('task-complete', { summary });
+  }
+
+  showMaxTurnWarning(limit: number): void {
+    process.stderr.write(
+      chalk.yellow(`\n  ⚠  Maximum tool calls (${limit}) reached. Stopping agent turn.\n`),
+    );
+    this.bridge?.emit('max-turn-warning', { limit });
+  }
+
+  showUnclearSignal(message: string): void {
+    process.stderr.write(chalk.yellow(`\n  ⚠  Model uncertainty: ${message}\n`));
+    this.bridge?.emit('unclear-signal', { message });
   }
 
   private stopThinkingSpinner(): void {

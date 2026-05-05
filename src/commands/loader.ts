@@ -40,16 +40,46 @@ function parseFrontmatter(content: string): { meta: CommandFrontmatter; body: st
       continue;
     }
 
-    if (inArgs && line.match(/^\s+-\s+name:/)) {
-      const nameMatch = line.match(/name:\s*(.+)/);
-      if (nameMatch) {
+    if (inArgs) {
+      // Start of a new arg item: "  - name: foo"
+      const newArgMatch = line.match(/^\s+-\s+name:\s*(.+)/);
+      if (newArgMatch) {
         argsArray = argsArray ?? [];
-        argsArray.push({ name: nameMatch[1].trim() });
+        argsArray.push({ name: newArgMatch[1].trim() });
+        continue;
+      }
+      // Properties of the current arg item
+      const current = argsArray && argsArray[argsArray.length - 1];
+      if (current) {
+        const descMatch = line.match(/^\s+description:\s*(.*)/);
+        if (descMatch) {
+          current.description = descMatch[1].replace(/^["']|["']$/g, '').trim();
+          continue;
+        }
+        const reqMatch = line.match(/^\s+required:\s*(true|false)/);
+        if (reqMatch) {
+          (current as Record<string, unknown>).required = reqMatch[1] === 'true';
+          continue;
+        }
+        const defMatch = line.match(/^\s+default:\s*(.*)/);
+        if (defMatch) {
+          current.default = defMatch[1].replace(/^["']|["']$/g, '').trim();
+          continue;
+        }
       }
     }
   }
 
   if (argsArray.length > 0) meta['args'] = argsArray;
+
+  // argument-hint shim: if no args: block but argument-hint is present,
+  // synthesize a single non-required arg from the hint text.
+  if (argsArray.length === 0 && typeof meta['argument-hint'] === 'string') {
+    const hint = (meta['argument-hint'] as string).replace(/[<>[\]|]/g, '').trim().split(/\s+/)[0];
+    if (hint) {
+      meta['args'] = [{ name: hint, description: meta['argument-hint'] as string, required: false }];
+    }
+  }
 
   // name is no longer required in frontmatter — caller derives from path
   return {

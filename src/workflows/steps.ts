@@ -1,4 +1,4 @@
-import { execSync } from 'node:child_process';
+import { spawn } from 'node:child_process';
 import type { WorkflowStep, StepResult, WorkflowContext } from './interface.js';
 import { interpolate } from '../commands/interpolate.js';
 import type { AgentContext } from '../commands/interface.js';
@@ -63,31 +63,38 @@ export async function executeStep(
           return { exit_code: 1, output: 'Shell step denied by user.' };
         }
       }
-      try {
-        const output = execSync(command, {
-          cwd: executors.agentContext.cwd,
-          encoding: 'utf8',
-          stdio: ['pipe', 'pipe', 'pipe'],
-        });
-        const result: StepResult = { exit_code: 0, output };
-        if (step.capture) {
-          wfContext.inputs[step.capture] = output;
-        }
-        return result;
-      } catch (err: unknown) {
-        const exitCode =
-          err instanceof Error && 'status' in err ? (err as { status?: number }).status ?? 1 : 1;
-        const stderr =
-          err instanceof Error && 'stderr' in err ? String((err as { stderr?: unknown }).stderr) : '';
-        const result: StepResult = { exit_code: exitCode, output: stderr };
-        if (step.capture) {
-          wfContext.inputs[step.capture] = stderr;
-        }
-        if (!step.continue_on_error) {
-          throw new Error(`Shell command failed (exit ${exitCode}): ${command}`, { cause: err });
-        }
-        return result;
+      const { exitCode, output } = await new Promise<{ exitCode: number; output: string }>(
+        (resolve) => {
+          const child = spawn(command, {
+            cwd: executors.agentContext.cwd,
+            shell: true,
+            stdio: ['ignore', 'pipe', 'pipe'],
+          });
+          let captured = '';
+          child.stdout?.on('data', (chunk: Buffer) => {
+            const text = chunk.toString();
+            process.stdout.write(text);
+            captured += text;
+          });
+          child.stderr?.on('data', (chunk: Buffer) => {
+            const text = chunk.toString();
+            process.stderr.write(text);
+            captured += text;
+          });
+          // 'close' waits for all pipe fds to close, which can hang if
+          // grandchild processes (e.g. vitest workers) outlive the parent.
+          // 'exit' fires as soon as the child itself exits — sufficient here.
+          child.on('exit', (code) => resolve({ exitCode: code ?? 1, output: captured }));
+        },
+      );
+      const result: StepResult = { exit_code: exitCode, output };
+      if (step.capture) {
+        wfContext.inputs[step.capture] = output;
       }
+      if (exitCode !== 0 && !step.continue_on_error) {
+        throw new Error(`Shell command failed (exit ${exitCode}): ${command}`);
+      }
+      return result;
     }
 
     case 'command': {

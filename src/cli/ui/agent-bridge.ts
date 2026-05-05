@@ -80,9 +80,12 @@ export interface AgentBridgeEvents {
   'thinking-stop': () => void;
   'turn-complete': () => void;
   'error': (message: string) => void;
-  'input-request': (respond: (input: string) => void) => void;
+  'input-request': (prompt: string, respond: (input: string) => void) => void;
   'context-limit-warning': () => void;
   'context-limit-action': (respond: (action: 'compact' | 'abort') => void) => void;
+  'task-complete': (data: { summary: string }) => void;
+  'max-turn-warning': (data: { limit: number }) => void;
+  'unclear-signal': (data: { message: string }) => void;
 }
 
 // ── AgentBridge ─────────────────────────────────────────────────────────────

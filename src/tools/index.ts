@@ -9,6 +9,8 @@ export { bashTool } from './bash.js';
 export { gitTool, createGitTool } from './git.js';
 export { createWebSearchTool } from './web-search.js';
 export { updateKnowledgeTool, setKnowledgeBase } from './update-knowledge.js';
+export { askUserTool, AskUserInputSchema } from './ask-user.js';
+export { taskCompleteTool, TaskCompleteInputSchema } from './task-complete.js';
 
 import { ToolRegistry } from './registry.js';
 import { readTool } from './read.js';

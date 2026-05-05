@@ -2,7 +2,7 @@ import React from 'react';
 import { Text } from 'ink';
 
 export interface ActivityBarProps {
-  phase: 'input' | 'thinking' | 'streaming' | 'approval' | 'idle';
+  phase: 'input' | 'thinking' | 'streaming' | 'approval' | 'idle' | 'slash-command';
   spinnerFrame: string;
   spinnerElapsed: string;
   liveTool: string | null;

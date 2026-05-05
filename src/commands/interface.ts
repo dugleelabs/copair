@@ -16,6 +16,8 @@ export interface AgentContext {
   cwd: string;
   model: string;
   branch?: string;
+  /** Run a named workflow directly, bypassing the model. */
+  runWorkflow?: (name: string, overrides?: Record<string, string>) => Promise<void>;
 }
 
 export interface Command {

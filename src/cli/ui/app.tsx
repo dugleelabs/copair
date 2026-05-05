@@ -289,6 +289,7 @@ const CopairApp = forwardRef<AppImperativeHandle, CopairAppProps>(function Copai
   const ctrlCCount = useRef(0);
   const ctrlCTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
   const nextId = useRef(0);
+  const inSlashCommand = useRef(false);
 
   // Static items — rendered once via <Static>, persist in terminal scrollback
   const [staticItems, setStaticItems] = useState<StaticItem[]>([]);
@@ -427,7 +428,13 @@ const CopairApp = forwardRef<AppImperativeHandle, CopairAppProps>(function Copai
         return '';
       });
       setLiveTool(null);
-      setState((prev) => ({ ...prev, phase: 'input', notification: null }));
+      // Stay in slash-command phase if a slash command is still running,
+      // so BorderedInput stays hidden and doesn't block subsequent approval prompts.
+      setState((prev) => ({
+        ...prev,
+        phase: inSlashCommand.current ? 'slash-command' : 'input',
+        notification: null,
+      }));
       bridge.resetTurn();
     };
 
@@ -478,10 +485,18 @@ const CopairApp = forwardRef<AppImperativeHandle, CopairAppProps>(function Copai
       setHistorySearchVisible(true);
       return;
     }
-    // Hide BorderedInput while the command runs so InputRequestHandler can
-    // capture keystrokes without interference. turn-complete resets to 'input'.
+    // Hide BorderedInput while the command runs so InputRequestHandler and
+    // ApprovalHandler can capture keystrokes without interference.
+    // inSlashCommand keeps turn-complete from resetting phase to 'input'
+    // mid-workflow (e.g. after a prompt step inside a multi-step workflow).
     setState((prev) => ({ ...prev, phase: 'slash-command' }));
-    await onSlashCommand?.(command, args);
+    inSlashCommand.current = true;
+    try {
+      await onSlashCommand?.(command, args);
+    } finally {
+      inSlashCommand.current = false;
+      setState((prev) => ({ ...prev, phase: 'input' }));
+    }
   }, [onSlashCommand]);
 
   return (

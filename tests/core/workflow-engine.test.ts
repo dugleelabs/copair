@@ -1,4 +1,5 @@
 import { describe, it, expect, vi } from 'vitest';
+import { tmpdir } from 'node:os';
 import { WorkflowEngine } from '../../src/workflows/engine.js';
 import type { WorkflowDefinition } from '../../src/workflows/interface.js';
 import type { StepExecutors } from '../../src/workflows/steps.js';
@@ -10,7 +11,7 @@ function makeExecutors(overrides: Partial<StepExecutors> = {}): StepExecutors {
     commandRunner: vi.fn(async () => true),
     agentContext: {
       model: 'test-model',
-      cwd: '/tmp',
+      cwd: tmpdir(),
       branch: 'main',
       sessionId: 'test',
     } as never,

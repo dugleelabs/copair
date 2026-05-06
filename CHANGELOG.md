@@ -2,6 +2,26 @@
 
 All notable changes to copair are documented here.
 
+## [Unreleased] — Workflow Engine Correctness and Documentation (spec 028 Phase C)
+
+### Fixed
+
+- **`on_max_iterations` uses configured step id (F-17)** — The workflow engine previously hardcoded `'report'` as the fallback step when a loop reached max iterations. It now reads `step.on_max_iterations` and looks up the configured step id in `stepsById`, so any step name can serve as the max-iterations handler.
+
+- **`on_max_iterations` fires exactly once (F-18)** — When a loop exits early because `loop_until` is satisfied before max iterations, the `on_max_iterations` handler step was still being executed sequentially in the normal step flow. The engine now tracks whether the handler already fired (`onMaxFired`) and skips it if the loop exited cleanly, printing `[step N/total] stepId [skipped]` in the console. When the loop does reach max iterations, the handler fires exactly once and sequential flow resumes from the step after it.
+
+- **Skipped-step rendering for condition jumps (F-19)** — `condition` steps that jump forward by more than one position now print `[step N/total] stepId [skipped]` for each intermediate step that was bypassed. Adjacent jumps and backward jumps are unaffected. This makes the full step sequence visible in the console regardless of which branch was taken.
+
+### Added
+
+- **Colored workflow step renderer (T-C12)** — Workflow output now uses a consistent visual format: a header line on workflow start (`Workflow  <name>  ·  N steps`), `▷ [N/total] id  badge  · attempt K/M` on step start, `✓ [N/total] id  badge  Xms` on completion, and `─ [N/total] id  [skipped]` for skipped steps. Type badges are color-coded: `sh` (blue), `ai` (magenta), `cmd` (cyan), `if` (yellow), `out` (dim).
+
+- **`workflow:` frontmatter dispatch for command files (T-C13)** — A command `.md` file can now declare `workflow: <name>` in its frontmatter to run a named workflow as its primary action. If the command body is non-empty, it is sent to the model as a follow-up prompt after the workflow completes. Commands with only `workflow:` and no body act as pure workflow aliases.
+
+- **Workflow reference documentation (F-20)** — `docs/workflows.md` now contains the full workflow reference: step-type field tables (`prompt`, `shell`, `command`, `condition`, `output`), the complete variable resolution order (`{{steps.id.field}}` → inputs/captures → context variables), loop-and-retry patterns with `max_iterations` + `loop_until` + `on_max_iterations`, the pre-push worked example with Mermaid flow diagram, step-by-step walkthrough of all execution paths, and the full annotated YAML. The corresponding page is live at [copair.dugleelabs.io/docs/workflows](https://copair.dugleelabs.io/docs/workflows).
+
+---
+
 ## [Unreleased] — Small Model Harness and Command Adoption (spec 028 Phase B)
 
 ### Added

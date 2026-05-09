@@ -1,17 +1,8 @@
 import type { ToolCallFormatter } from './formats/interface.js';
 import type { SmallModelsConfig } from '../config/schema.js';
+import { classifyModel } from './model-tiers.js';
 
 export { type SmallModelsConfig as SmallModelConfig };
-
-export const DEFAULT_SMALL_MODELS = [
-  'qwen',
-  'llama-3.1-8b',
-  'llama-3.2-1b',
-  'llama-3.2-3b',
-  'mistral-7b',
-  'phi-3',
-  'deepseek-coder-1.3b',
-];
 
 const SMALL_MODEL_SYSTEM_PROMPT = `Small model operating rules:
 1. Call tools one at a time. Wait for the result before chaining the next call.
@@ -29,10 +20,10 @@ export class SmallModelHarness {
   constructor(modelId: string, config: SmallModelsConfig = {}, forceOverride?: boolean) {
     if (forceOverride !== undefined) {
       this.isSmallModel = forceOverride;
+    } else if (config.tier_overrides?.[modelId]) {
+      this.isSmallModel = config.tier_overrides[modelId] === 'small';
     } else {
-      const ids = config.model_ids ?? DEFAULT_SMALL_MODELS;
-      const lowerModel = modelId.toLowerCase();
-      this.isSmallModel = ids.some((id) => lowerModel.includes(id.toLowerCase()));
+      this.isSmallModel = classifyModel(modelId).tier === 'small';
     }
     this.config = config;
   }

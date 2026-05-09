@@ -1,38 +1,48 @@
 /**
- * Tests for spec 028 T-B20: SmallModelHarness unit tests
+ * Tests for spec 028 T-B20 (harness mechanics) + T-C15 (tier-based detection)
  */
 import { describe, it, expect } from 'vitest';
-import { SmallModelHarness, DEFAULT_SMALL_MODELS } from '../../src/core/small-model-harness.js';
+import { SmallModelHarness } from '../../src/core/small-model-harness.js';
 import { FencedBlockFormatter } from '../../src/core/formats/fenced-block.js';
 import { QwenXmlFormatter } from '../../src/core/formats/qwen-xml.js';
 import { DsmlFormatter } from '../../src/core/formats/dsml.js';
 
 describe('SmallModelHarness — model detection', () => {
-  it('detects model IDs in DEFAULT_SMALL_MODELS list', () => {
-    for (const modelId of DEFAULT_SMALL_MODELS) {
-      const harness = new SmallModelHarness(modelId);
-      expect(harness.isSmallModel, `Expected ${modelId} to be detected as small`).toBe(true);
-    }
+  it('classifies small local models as small', () => {
+    expect(new SmallModelHarness('qwen2.5-coder:7b').isSmallModel).toBe(true);
+    expect(new SmallModelHarness('llama-3.1-8b').isSmallModel).toBe(true);
+    expect(new SmallModelHarness('mistral-7b').isSmallModel).toBe(true);
+    expect(new SmallModelHarness('phi-3-mini').isSmallModel).toBe(true);
+    expect(new SmallModelHarness('command-r7b').isSmallModel).toBe(true);
   });
 
-  it('detects small models by substring match (case-insensitive)', () => {
-    const harness = new SmallModelHarness('ollama/Qwen2.5-Coder-7B-Instruct');
-    expect(harness.isSmallModel).toBe(true);
+  it('classifies frontier-class models as large despite family-name substrings', () => {
+    // F-24: substring-match would have flagged these as small. They are not.
+    expect(new SmallModelHarness('qwen.qwen3-coder-480b-a35b-v1:0').isSmallModel).toBe(false);
+    expect(new SmallModelHarness('qwen.qwen3-235b-a22b-2507-v1:0').isSmallModel).toBe(false);
+    expect(new SmallModelHarness('qwen-max').isSmallModel).toBe(false);
+    expect(new SmallModelHarness('claude-sonnet-4-6').isSmallModel).toBe(false);
+    expect(new SmallModelHarness('llama-3.3-70b').isSmallModel).toBe(false);
   });
 
-  it('does not mark a large model as small', () => {
-    const harness = new SmallModelHarness('claude-3-5-sonnet');
-    expect(harness.isSmallModel).toBe(false);
+  it('normalizes Bedrock and OpenRouter prefixes', () => {
+    expect(new SmallModelHarness('us.anthropic.claude-sonnet-4-6').isSmallModel).toBe(false);
+    expect(new SmallModelHarness('anthropic/claude-sonnet-4-6').isSmallModel).toBe(false);
+    expect(new SmallModelHarness('Qwen/Qwen2.5-Coder-7B-Instruct').isSmallModel).toBe(true);
   });
 
-  it('user-supplied model_ids replace defaults, not merge', () => {
-    // Only 'my-custom-model' is in the override list
-    const harness = new SmallModelHarness('qwen', { model_ids: ['my-custom-model'] });
-    // qwen is in defaults but NOT in override list → not a small model
-    expect(harness.isSmallModel).toBe(false);
+  it('tier_overrides wins over built-in classification', () => {
+    // Force a frontier model into small-tier behavior
+    const small = new SmallModelHarness('claude-sonnet-4-6', {
+      tier_overrides: { 'claude-sonnet-4-6': 'small' },
+    });
+    expect(small.isSmallModel).toBe(true);
 
-    const harness2 = new SmallModelHarness('my-custom-model', { model_ids: ['my-custom-model'] });
-    expect(harness2.isSmallModel).toBe(true);
+    // Force a known-small model out of the harness
+    const large = new SmallModelHarness('qwen2.5-coder:7b', {
+      tier_overrides: { 'qwen2.5-coder:7b': 'large' },
+    });
+    expect(large.isSmallModel).toBe(false);
   });
 
   it('forceOverride=true forces small model regardless of model ID', () => {
@@ -41,24 +51,33 @@ describe('SmallModelHarness — model detection', () => {
   });
 
   it('forceOverride=false forces non-small-model regardless of model ID', () => {
-    const harness = new SmallModelHarness('qwen', {}, false);
+    const harness = new SmallModelHarness('qwen2.5:7b', {}, false);
+    expect(harness.isSmallModel).toBe(false);
+  });
+
+  it('forceOverride takes precedence over tier_overrides', () => {
+    const harness = new SmallModelHarness(
+      'claude-sonnet-4-6',
+      { tier_overrides: { 'claude-sonnet-4-6': 'small' } },
+      false,
+    );
     expect(harness.isSmallModel).toBe(false);
   });
 });
 
 describe('SmallModelHarness — getSystemPromptAddition', () => {
   it('returns non-null for small model', () => {
-    const harness = new SmallModelHarness('qwen');
+    const harness = new SmallModelHarness('qwen2.5:7b');
     expect(harness.getSystemPromptAddition()).not.toBeNull();
   });
 
   it('returns null for large model', () => {
-    const harness = new SmallModelHarness('claude-3-5-sonnet');
+    const harness = new SmallModelHarness('claude-sonnet-4-6');
     expect(harness.getSystemPromptAddition()).toBeNull();
   });
 
   it('content includes all four rules', () => {
-    const harness = new SmallModelHarness('qwen');
+    const harness = new SmallModelHarness('qwen2.5:7b');
     const addition = harness.getSystemPromptAddition()!;
     expect(addition).toContain('one at a time');
     expect(addition).toContain('UNCLEAR');
@@ -69,19 +88,19 @@ describe('SmallModelHarness — getSystemPromptAddition', () => {
 
 describe('SmallModelHarness — getPerTurnReminder', () => {
   it('returns non-null for small model', () => {
-    const harness = new SmallModelHarness('qwen');
+    const harness = new SmallModelHarness('qwen2.5:7b');
     expect(harness.getPerTurnReminder()).not.toBeNull();
   });
 
   it('returns null for large model', () => {
-    const harness = new SmallModelHarness('claude-3-5-sonnet');
+    const harness = new SmallModelHarness('claude-sonnet-4-6');
     expect(harness.getPerTurnReminder()).toBeNull();
   });
 });
 
 describe('SmallModelHarness — getFormatHint', () => {
   it('calls formatter.exampleCall() for small models and returns prefixed hint', () => {
-    const harness = new SmallModelHarness('qwen');
+    const harness = new SmallModelHarness('qwen2.5:7b');
     const formatter = new FencedBlockFormatter();
     const hint = harness.getFormatHint(formatter);
     expect(hint).not.toBeNull();
@@ -90,7 +109,7 @@ describe('SmallModelHarness — getFormatHint', () => {
   });
 
   it('returns null for large models (no hint injected)', () => {
-    const harness = new SmallModelHarness('claude-3-5-sonnet');
+    const harness = new SmallModelHarness('claude-sonnet-4-6');
     const formatter = new FencedBlockFormatter();
     expect(harness.getFormatHint(formatter)).toBeNull();
   });

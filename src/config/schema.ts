@@ -98,8 +98,13 @@ export const NetworkConfigSchema = z.object({
 });
 
 export const SmallModelsConfigSchema = z.object({
-  /** Model ID substrings that identify small models. When set, replaces the built-in default list. */
-  model_ids: z.array(z.string()).optional(),
+  /**
+   * Per-model tier override map (model ID → tier). Wins over the built-in
+   * `classifyModel()` classifier but loses to the `--small-model` /
+   * `--no-small-model` CLI flag. Use to flag a custom fine-tune as small,
+   * or to opt a known-small model out of the harness.
+   */
+  tier_overrides: z.record(z.string(), z.enum(['small', 'large'])).optional(),
   /** Maximum number of tool calls permitted per agent turn for small models (default: 20). */
   max_tool_calls: z.number().int().positive().optional(),
 });

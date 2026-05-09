@@ -144,6 +144,13 @@ export class Agent {
 
     // Agent loop — keep calling provider until no more tool calls
     while (true) {
+      // F-25: Reset streaming filter state at the top of each iteration so
+      // `suppressAfterMatch` (qwen-xml, dsml) scopes to one model response,
+      // not the full session. Otherwise the first `<tool_call>` block in any
+      // turn flips `matchSeen = true` permanently, discarding all subsequent
+      // text — including the final-turn analysis answer.
+      this.textFilter.reset();
+
       const messages = await this.contextWindow.checkAndTruncate(
         this.conversation.getHistory(),
         this.provider,

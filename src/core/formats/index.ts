@@ -117,6 +117,18 @@ export class StreamingMarkupFilter {
     return output;
   }
 
+  /**
+   * Reset internal state to initial values. Call between agent-loop iterations
+   * so `suppressAfterMatch` semantics scope to a single model response, not the
+   * full session. Without this, once any turn matches a `<tool_call>` block,
+   * every subsequent stream chunk is discarded for the rest of the session.
+   */
+  reset(): void {
+    this.buffer = '';
+    this.suppressing = false;
+    this.matchSeen = false;
+  }
+
   /** Call once after the stream ends to flush any held-back text. */
   flush(): string {
     if (!this.openTag) return '';

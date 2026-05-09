@@ -12,6 +12,8 @@ All notable changes to copair are documented here.
 
 - **Skipped-step rendering for condition jumps (F-19)** — `condition` steps that jump forward by more than one position now print `[step N/total] stepId [skipped]` for each intermediate step that was bypassed. Adjacent jumps and backward jumps are unaffected. This makes the full step sequence visible in the console regardless of which branch was taken.
 
+- **qwen-xml formatter accepts Hermes envelope (F-23)** — Qwen3-Coder served via AWS Bedrock's OpenAI-compatible endpoint relapses from the prescribed JSON-in-tag tool-call format to its native Hermes function/parameter XML envelope (`<tool_call><function=NAME><parameter=KEY>VALUE</parameter></function></tool_call>`) after one successful round-trip. The previous parser called `JSON.parse` on the inner content, dropped Hermes calls silently, and froze the agent on an empty input prompt. `QwenXmlFormatter.parse()` now falls back to a Hermes envelope parser when JSON parsing fails, and `buildSystemPrompt()` includes an explicit anti-format rule to reduce relapse frequency. Verified against `qwen.qwen3-coder-480b-a35b-v1:0` on Bedrock `ap-south-1`.
+
 ### Added
 
 - **Colored workflow step renderer (T-C12)** — Workflow output now uses a consistent visual format: a header line on workflow start (`Workflow  <name>  ·  N steps`), `▷ [N/total] id  badge  · attempt K/M` on step start, `✓ [N/total] id  badge  Xms` on completion, and `─ [N/total] id  [skipped]` for skipped steps. Type badges are color-coded: `sh` (blue), `ai` (magenta), `cmd` (cyan), `if` (yellow), `out` (dim).

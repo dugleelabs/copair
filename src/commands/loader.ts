@@ -7,6 +7,7 @@ import { interpolate } from './interpolate.js';
 interface CommandFrontmatter {
   name: string;
   description?: string;
+  workflow?: string;
   args?: Array<{ name: string; description?: string; default?: string; required?: boolean }>;
 }
 
@@ -140,6 +141,8 @@ async function loadCommandsFromDir(
     // Derive name from relative path if not in frontmatter
     const name = meta.name || nameFromPath(relative(dir, filePath));
 
+    const workflowName = meta.workflow?.trim();
+
     const command: Command = {
       definition: {
         name,
@@ -147,7 +150,22 @@ async function loadCommandsFromDir(
         args: meta.args,
         source,
       },
-      async execute(args: Record<string, string>, context: AgentContext): Promise<string> {
+      async execute(args: Record<string, string>, context: AgentContext): Promise<string | void> {
+        if (workflowName) {
+          if (!context.runWorkflow) {
+            // Fallback: send a plain instruction if workflow runner isn't wired
+            return `Run /workflow ${workflowName} to proceed.${body ? `\n\n${interpolate(body, args, context)}` : ''}`;
+          }
+          // Pass all user-supplied args as workflow input overrides (skip positional catch-all)
+          const overrides: Record<string, string> = {};
+          for (const [k, v] of Object.entries(args)) {
+            if (k !== 'ARGUMENTS') overrides[k] = v;
+          }
+          await context.runWorkflow(workflowName, overrides);
+          // If the file has a body, send it to the model as a follow-up prompt
+          // so the model can act on the workflow's output.
+          return body ? interpolate(body, args, context) : undefined;
+        }
         return interpolate(body, args, context);
       },
     };

@@ -24,6 +24,7 @@ import { PathGuard } from '../../src/core/path-guard.js';
 import { ApprovalGate } from '../../src/core/approval-gate.js';
 import { ToolExecutor } from '../../src/core/tool-executor.js';
 import { AuditLog } from '../../src/core/audit-log.js';
+import * as ttyPromptModule from '../../src/cli/tty-prompt.js';
 import type { AuditEntry } from '../../src/core/audit-log.js';
 import { McpClientManager, buildMcpEnv, validateMcpServer } from '../../src/mcp/client.js';
 import { runAuditCommand } from '../../src/cli/commands/audit.js';
@@ -188,6 +189,7 @@ describe('AuditLog integration — ToolExecutor pipeline', () => {
     sessionDir = makeSessionDir();
     stdoutSpy = vi.spyOn(process.stdout, 'write').mockImplementation(() => true);
     stderrSpy = vi.spyOn(process.stderr, 'write').mockImplementation(() => true);
+    vi.spyOn(ttyPromptModule, 'readFromTty').mockReturnValue(null);
   });
 
   afterEach(() => {

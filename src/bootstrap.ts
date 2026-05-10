@@ -390,7 +390,7 @@ export async function bootstrapCLI(options: BootstrapOptions = {}): Promise<void
   setSessionManagerRef(sessionManager);
 
   // Build agent context for commands
-  const agentContext = {
+  const agentContext: import('./commands/interface.js').AgentContext = {
     cwd,
     model: modelAlias,
     branch: gitCtx.branch,
@@ -413,6 +413,12 @@ export async function bootstrapCLI(options: BootstrapOptions = {}): Promise<void
     },
     async (command: string) => gate.allow('bash', { command }),
   );
+
+  // Wire runWorkflow so custom commands with `workflow:` frontmatter can dispatch
+  // directly to the engine without going through the model.
+  agentContext.runWorkflow = async (name, overrides = {}) => {
+    await workflowCmd.execute({ name, ...overrides }, { ...agentContext, model: agent.model });
+  };
 
   await cmdRegistry.loadAll();
   (cmdRegistry as unknown as { commands: Map<string, unknown> }).commands.set(

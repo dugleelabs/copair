@@ -10,6 +10,27 @@ const TOOL_CALL_UNCLOSED_RE = /<tool_call>\s*\n?([\s\S]*?)$/g;
 /** Matches any <tool_call> markup (for text filtering). */
 const MARKUP_PATTERN = /<tool_call>[\s\S]*?(?:<\/tool_call>|$)/g;
 
+// Hermes-style envelope: <function=NAME><parameter=KEY>VALUE</parameter>...</function>
+// Qwen3-Coder on Bedrock relapses to this dialect mid-conversation despite the JSON-in-tag prompt.
+const HERMES_FN_RE = /<function=([\w.-]+)>/;
+const HERMES_PARAM_RE = /<parameter=([\w.-]+)>\s*([\s\S]*?)\s*<\/parameter>/g;
+
+function tryParseHermesEnvelope(text: string): ParsedToolCall | null {
+  const fn = HERMES_FN_RE.exec(text);
+  if (!fn) return null;
+  const args: Record<string, string> = {};
+  HERMES_PARAM_RE.lastIndex = 0;
+  let pm: RegExpExecArray | null;
+  while ((pm = HERMES_PARAM_RE.exec(text)) !== null) {
+    args[pm[1]] = pm[2];
+  }
+  return {
+    id: `call_${Math.random().toString(36).slice(2, 9)}`,
+    name: fn[1],
+    arguments: JSON.stringify(args),
+  };
+}
+
 export class QwenXmlFormatter implements ToolCallFormatter {
   readonly name = 'qwen-xml';
   readonly markupPattern = MARKUP_PATTERN;
@@ -25,7 +46,7 @@ export class QwenXmlFormatter implements ToolCallFormatter {
       regex.lastIndex = 0;
       let match: RegExpExecArray | null;
       while ((match = regex.exec(text)) !== null) {
-        const tc = tryParseToolCall(match[1]);
+        const tc = tryParseToolCall(match[1]) ?? tryParseHermesEnvelope(match[1]);
         if (tc) {
           toolCalls.push(tc);
           remainingText = remainingText.replace(match[0], '');
@@ -68,7 +89,8 @@ To call a tool, emit EXACTLY:
 Rules:
 - One tool call per message. Wait for the result before continuing.
 - NEVER output fake results. NEVER narrate what a tool would return. Call the tool and use the real result.
-- NEVER continue talking after emitting a tool call. Stop immediately after </tool_call> and wait for the result.${webSearchPriority}
+- NEVER continue talking after emitting a tool call. Stop immediately after </tool_call> and wait for the result.
+- NEVER use <function=NAME> or <parameter=KEY> syntax inside <tool_call>. Only the JSON-in-tag form shown above is accepted.${webSearchPriority}
 Example -- to check git status:
 <tool_call>
 {"name": "git", "arguments": {"args": "status"}}

@@ -33,6 +33,81 @@ describe('QwenXmlFormatter', () => {
       expect(result.toolCalls).toHaveLength(1);
       expect(result.toolCalls[0].name).toBe('bash');
     });
+
+    // F-23: Qwen3-Coder on Bedrock relapses from JSON-in-tag to the Hermes
+    // function/parameter envelope mid-conversation. The formatter must accept both.
+    it('parses Hermes envelope with single parameter', () => {
+      const text = '<tool_call>\n<function=read>\n<parameter=file_path>/Volumes/repo/src/index.ts</parameter>\n</function>\n</tool_call>';
+      const result = formatter.parse(text);
+      expect(result.toolCalls).toHaveLength(1);
+      expect(result.toolCalls[0].name).toBe('read');
+      expect(JSON.parse(result.toolCalls[0].arguments)).toEqual({
+        file_path: '/Volumes/repo/src/index.ts',
+      });
+    });
+
+    it('parses Hermes envelope with multiple parameters', () => {
+      const text = [
+        '<tool_call>',
+        '<function=edit>',
+        '<parameter=file_path>/x/a.ts</parameter>',
+        '<parameter=old_string>foo</parameter>',
+        '<parameter=new_string>bar</parameter>',
+        '</function>',
+        '</tool_call>',
+      ].join('\n');
+      const result = formatter.parse(text);
+      expect(result.toolCalls).toHaveLength(1);
+      expect(result.toolCalls[0].name).toBe('edit');
+      expect(JSON.parse(result.toolCalls[0].arguments)).toEqual({
+        file_path: '/x/a.ts',
+        old_string: 'foo',
+        new_string: 'bar',
+      });
+    });
+
+    it('parses Hermes envelope with multi-line parameter value', () => {
+      const text = [
+        '<tool_call>',
+        '<function=write>',
+        '<parameter=file_path>/x/note.md</parameter>',
+        '<parameter=content>line one',
+        'line two',
+        'line three</parameter>',
+        '</function>',
+        '</tool_call>',
+      ].join('\n');
+      const result = formatter.parse(text);
+      expect(result.toolCalls).toHaveLength(1);
+      const args = JSON.parse(result.toolCalls[0].arguments);
+      expect(args.file_path).toBe('/x/note.md');
+      expect(args.content).toBe('line one\nline two\nline three');
+    });
+
+    it('parses mixed JSON-in-tag and Hermes calls in a single input', () => {
+      const text = [
+        '<tool_call>',
+        '{"name": "read", "arguments": {"file_path": "/a.ts"}}',
+        '</tool_call>',
+        'Now editing:',
+        '<tool_call>',
+        '<function=edit>',
+        '<parameter=file_path>/a.ts</parameter>',
+        '<parameter=old_string>x</parameter>',
+        '<parameter=new_string>y</parameter>',
+        '</function>',
+        '</tool_call>',
+      ].join('\n');
+      const result = formatter.parse(text);
+      expect(result.toolCalls).toHaveLength(2);
+      expect(result.toolCalls[0].name).toBe('read');
+      expect(result.toolCalls[1].name).toBe('edit');
+      expect(JSON.parse(result.toolCalls[1].arguments)).toEqual({
+        file_path: '/a.ts',
+        old_string: 'x',
+        new_string: 'y',
+      });
+    });
   });
 
   describe('markupPattern', () => {

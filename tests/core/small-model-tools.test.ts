@@ -2,7 +2,7 @@
  * Tests for spec 028 T-B21: ask_user, task_complete, and max-turn guard
  */
 import { describe, it, expect, vi } from 'vitest';
-import { SmallModelHarness, DEFAULT_SMALL_MODELS } from '../../src/core/small-model-harness.js';
+import { SmallModelHarness } from '../../src/core/small-model-harness.js';
 import { askUserTool } from '../../src/tools/ask-user.js';
 import { taskCompleteTool } from '../../src/tools/task-complete.js';
 import { AskUserInputSchema } from '../../src/tools/ask-user.js';
@@ -74,19 +74,19 @@ describe('ask_user and task_complete excluded from large model tool list', () =>
   });
 
   it('small model harness.isSmallModel is true', () => {
-    const harness = new SmallModelHarness(DEFAULT_SMALL_MODELS[0]);
+    const harness = new SmallModelHarness('qwen2.5-coder:7b');
     expect(harness.isSmallModel).toBe(true);
   });
 });
 
 describe('max-turn guard logic', () => {
   it('maxToolCalls defaults to 20 for small models', () => {
-    const harness = new SmallModelHarness('qwen');
+    const harness = new SmallModelHarness('qwen2.5:7b');
     expect(harness.maxToolCalls).toBe(20);
   });
 
   it('maxToolCalls uses config value when provided', () => {
-    const harness = new SmallModelHarness('qwen', { max_tool_calls: 5 });
+    const harness = new SmallModelHarness('qwen2.5:7b', { max_tool_calls: 5 });
     expect(harness.maxToolCalls).toBe(5);
   });
 

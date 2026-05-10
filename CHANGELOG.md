@@ -2,6 +2,36 @@
 
 All notable changes to copair are documented here.
 
+## [Unreleased] — Workflow Engine Correctness and Documentation (spec 028 Phase C)
+
+### Fixed
+
+- **`on_max_iterations` uses configured step id (F-17)** — The workflow engine previously hardcoded `'report'` as the fallback step when a loop reached max iterations. It now reads `step.on_max_iterations` and looks up the configured step id in `stepsById`, so any step name can serve as the max-iterations handler.
+
+- **`on_max_iterations` fires exactly once (F-18)** — When a loop exits early because `loop_until` is satisfied before max iterations, the `on_max_iterations` handler step was still being executed sequentially in the normal step flow. The engine now tracks whether the handler already fired (`onMaxFired`) and skips it if the loop exited cleanly, printing `[step N/total] stepId [skipped]` in the console. When the loop does reach max iterations, the handler fires exactly once and sequential flow resumes from the step after it.
+
+- **Skipped-step rendering for condition jumps (F-19)** — `condition` steps that jump forward by more than one position now print `[step N/total] stepId [skipped]` for each intermediate step that was bypassed. Adjacent jumps and backward jumps are unaffected. This makes the full step sequence visible in the console regardless of which branch was taken.
+
+- **qwen-xml formatter accepts Hermes envelope (F-23)** — Qwen3-Coder served via AWS Bedrock's OpenAI-compatible endpoint relapses from the prescribed JSON-in-tag tool-call format to its native Hermes function/parameter XML envelope (`<tool_call><function=NAME><parameter=KEY>VALUE</parameter></function></tool_call>`) after one successful round-trip. The previous parser called `JSON.parse` on the inner content, dropped Hermes calls silently, and froze the agent on an empty input prompt. `QwenXmlFormatter.parse()` now falls back to a Hermes envelope parser when JSON parsing fails, and `buildSystemPrompt()` includes an explicit anti-format rule to reduce relapse frequency. Verified against `qwen.qwen3-coder-480b-a35b-v1:0` on Bedrock `ap-south-1`.
+
+- **Built-in model tier classifier (F-24)** — `SmallModelHarness` previously substring-matched the model ID against a six-entry default list (`['qwen', 'llama-3.1-8b', 'llama-3.2-1b', 'llama-3.2-3b', 'mistral-7b', 'phi-3', 'deepseek-coder-1.3b']`) to decide whether to engage. Substring matching is fundamentally broken for family-name substrings: `'qwen'` matched `qwen.qwen3-coder-480b-a35b-v1:0` (a 480B-parameter MoE coder), causing the agent to terminate via `task_complete` instead of producing analysis output and burn 220K input tokens per request on per-turn format-reminder noise. Replaced with a built-in model tier classifier (`src/core/model-tiers.ts`) operating on the canonical model identity. Tier is binary: `small` (harness on) or `large` (harness off). The classifier first normalizes the model ID across hosting platforms (strips Bedrock vendor and regional prefixes such as `qwen.`, `anthropic.`, `us.`, `eu.`; strips OpenRouter and Hugging Face `org/path/`; collapses delimiters), then walks an ordered rule list of regexes (most-specific first) to assign a tier. Coverage spans ~250 model variants across 22 provider families: Anthropic, OpenAI, Google Gemini and Gemma, Meta Llama 3/4, Alibaba Qwen 2.5/3 (including Coder, VL, Next), DeepSeek V3/V4/R1/R2 and distilled variants, Mistral (Large/Medium/Small/Mixtral/Codestral/Magistral/Pixtral/Ministral/Nemo), Microsoft Phi-3/3.5/4, xAI Grok 1–5, Amazon Nova, IBM Granite 3/4, NVIDIA Llama-Nemotron, Cohere Command, AI21 Jamba, Reka Core/Flash/Edge, Moonshot Kimi K2, Z.ai GLM 4.5+/5, MiniMax M1/M2, 01.AI Yi, TII Falcon, OpenAI gpt-oss. Default for unmatched IDs is `large` — the safer choice, since the harness is invasive and unknown frontier models shouldn't be crippled by it.
+
+- **Streaming filter resets between agent loop iterations (F-25)** — `StreamingMarkupFilter` (`src/core/formats/index.ts`) carries three pieces of internal state (`buffer`, `suppressing`, `matchSeen`) intended to scope to one model response. The agent reused one filter instance across the entire session, so once any turn produced a `<tool_call>` block the `matchSeen` flag flipped to true permanently and every subsequent stream chunk was discarded by the `suppressAfterMatch` guard. Symptom: after F-23/F-24 enabled multi-turn Qwen-on-Bedrock sessions, the agent's final-turn analysis text (1454 output tokens of plain prose, `tool_calls: []` in the API debug log) silently dropped on the floor — the user saw an apparently-frozen UI on a blank input prompt. Added `StreamingMarkupFilter.reset()` and now call it at the top of each agent-loop iteration before `activeProvider.chat()`. The `suppressAfterMatch` semantics (originally designed to discard hallucinated trailing junk after `</tool_call>` within a single response) are preserved within each response.
+
+### Changed (BREAKING)
+
+- **`small_models.model_ids` config field removed (F-24)** — The substring-list field is replaced by per-model `small_models.tier_overrides: Record<string, 'small' | 'large'>`. Old configs with `model_ids` are silently dropped by Zod's default object behavior. The narrow population of users who customized the substring list should migrate to `tier_overrides` if they need to flag a custom fine-tune as small or opt a known-small model out of the harness. Most users never need this — automatic classification handles the common case.
+
+### Added
+
+- **Colored workflow step renderer (T-C12)** — Workflow output now uses a consistent visual format: a header line on workflow start (`Workflow  <name>  ·  N steps`), `▷ [N/total] id  badge  · attempt K/M` on step start, `✓ [N/total] id  badge  Xms` on completion, and `─ [N/total] id  [skipped]` for skipped steps. Type badges are color-coded: `sh` (blue), `ai` (magenta), `cmd` (cyan), `if` (yellow), `out` (dim).
+
+- **`workflow:` frontmatter dispatch for command files (T-C13)** — A command `.md` file can now declare `workflow: <name>` in its frontmatter to run a named workflow as its primary action. If the command body is non-empty, it is sent to the model as a follow-up prompt after the workflow completes. Commands with only `workflow:` and no body act as pure workflow aliases.
+
+- **Workflow reference documentation (F-20)** — `docs/workflows.md` now contains the full workflow reference: step-type field tables (`prompt`, `shell`, `command`, `condition`, `output`), the complete variable resolution order (`{{steps.id.field}}` → inputs/captures → context variables), loop-and-retry patterns with `max_iterations` + `loop_until` + `on_max_iterations`, the pre-push worked example with Mermaid flow diagram, step-by-step walkthrough of all execution paths, and the full annotated YAML. The corresponding page is live at [copair.dugleelabs.io/docs/workflows](https://copair.dugleelabs.io/docs/workflows).
+
+---
+
 ## [Unreleased] — Small Model Harness and Command Adoption (spec 028 Phase B)
 
 ### Added

@@ -7,16 +7,26 @@ import type { ToolCallFormatter } from './interface.js';
 import { DsmlFormatter } from './dsml.js';
 import { QwenXmlFormatter } from './qwen-xml.js';
 import { FencedBlockFormatter } from './fenced-block.js';
+import { getCapabilities } from '../model-capabilities.js';
 
 export type FormatName = 'dsml' | 'qwen-xml' | 'fenced-block';
 
 /**
- * Resolve the appropriate formatter for a provider/model combination.
+ * Resolve the appropriate text-based tool-call formatter for a provider/model.
  *
  * Priority:
- *   1. Explicit override from config
- *   2. Auto-detect from model ID
- *   3. Default to fenced-block
+ *   1. Explicit override from config (caller passes `override?: FormatName`)
+ *   2. `getCapabilities(modelId).preferred_format` — derived from spec 029's
+ *      generic family-prefix function (qwen-family → qwen-xml, deepseek → dsml,
+ *      frontier-cloud → native, else fenced-block). The capabilities module is
+ *      the single source of truth; no per-model branches live here.
+ *   3. `'native'` falls back to `'fenced-block'` inside this function — native
+ *      tool calling goes through provider SDKs (Anthropic, OpenAI, Google),
+ *      not text-extraction. If a 'native' model somehow hits this code path,
+ *      fenced-block is the safest universal text-based parser.
+ *
+ * Note: `_providerName` is currently unused; preserved for backwards-compat
+ * with callers and possible future use.
  */
 export function resolveFormatter(
   _providerName: string,
@@ -27,10 +37,11 @@ export function resolveFormatter(
     return createFormatter(override);
   }
 
-  const id = modelId.toLowerCase();
-  if (id.includes('deepseek')) return new DsmlFormatter();
-  if (id.includes('qwen')) return new QwenXmlFormatter();
-  return new FencedBlockFormatter();
+  const preferred = getCapabilities(modelId).preferred_format;
+  // 'native' isn't a text-based formatter — fall through to fenced-block as
+  // the universal safe default for any model that mistakenly hits this path.
+  const formatterName: FormatName = preferred === 'native' ? 'fenced-block' : preferred;
+  return createFormatter(formatterName);
 }
 
 function createFormatter(name: FormatName): ToolCallFormatter {

@@ -2,6 +2,25 @@ import type { ToolDefinition } from '../../providers/interface.js';
 import type { ToolCallFormatter, ParsedToolCall } from './interface.js';
 import { tryParseToolCall } from './fenced-block.js';
 
+/**
+ * QwenXmlFormatter — `<tool_call>...</tool_call>` envelope.
+ *
+ * The qwen-xml format permits two output shapes inside the envelope:
+ *   1. Canonical JSON: `{"name": "...", "arguments": {...}}`
+ *   2. Hermes-style nested tags: `<function=name><parameter=key>val</parameter>...</function>`
+ *
+ * The parser tries (1) first and falls back to (2) on JSON parse failure.
+ * **The fallback is unconditional** — any model whose output uses this
+ * format gets the resilient parser, regardless of which model produced it.
+ * This is a property of the *format*, not a per-model quirk handler.
+ *
+ * Originally introduced for Qwen3-Coder on Bedrock (spec 028 F-23) which
+ * relapsed to the Hermes shape mid-conversation. Reframed 2026-05-15 per
+ * spec 029 as a generic protocol-resilience pattern — multiple small models
+ * across providers exhibit similar drift, and we don't gate the fix on
+ * which model emitted the text.
+ */
+
 // Qwen-style XML tags: <tool_call> ... </tool_call>
 const TOOL_CALL_CLOSED_RE = /<tool_call>\s*\n?([\s\S]*?)<\/tool_call>/g;
 // Unclosed <tool_call> -- model forgot closing tag (common with small models)
@@ -11,7 +30,7 @@ const TOOL_CALL_UNCLOSED_RE = /<tool_call>\s*\n?([\s\S]*?)$/g;
 const MARKUP_PATTERN = /<tool_call>[\s\S]*?(?:<\/tool_call>|$)/g;
 
 // Hermes-style envelope: <function=NAME><parameter=KEY>VALUE</parameter>...</function>
-// Qwen3-Coder on Bedrock relapses to this dialect mid-conversation despite the JSON-in-tag prompt.
+// One of two valid output shapes inside the qwen-xml envelope (see class JSDoc above).
 const HERMES_FN_RE = /<function=([\w.-]+)>/;
 const HERMES_PARAM_RE = /<parameter=([\w.-]+)>\s*([\s\S]*?)\s*<\/parameter>/g;
 

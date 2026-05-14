@@ -122,13 +122,19 @@ export function resolvePreferredFormat(normalizedId: string): ModelCapabilities[
  * Tier-driven harness defaults. Two settings: small (harness engaged) or
  * large (harness disengaged). Users override individual fields via
  * `model_overrides` config if they need more granularity per-model.
+ *
+ * **`max_tool_calls` is intentionally `undefined`** for both tiers so the
+ * resolution chain in `resolveMaxToolCalls` (small-model-harness.ts) falls
+ * through to `config.small_models.max_tool_calls` (the global) and then to
+ * the hardcoded fallback. This preserves spec 028's backwards-compat —
+ * users who set `small_models.max_tool_calls: N` continue to see N apply.
  */
 export function resolveHarnessDefaults(tier: ModelTier): ModelCapabilities['recommended_harness'] {
   if (tier === 'small') {
     return {
       enable_small_model_harness: true,
       max_turns: 30,
-      max_tool_calls: 20,
+      max_tool_calls: undefined, // falls through to global config (NF-01 backwards compat)
       inject_format_reminder_every_turn: true,
     };
   }
@@ -206,17 +212,25 @@ export function _getModelOverridesForTests(): Record<string, ModelOverride> {
 export function getCapabilities(modelId: string | null | undefined): ModelCapabilities {
   const id = modelId ?? '';
   const normalized = normalizeModelId(id);
-  const { tier } = classifyModel(id);
+  const { tier: derivedTier } = classifyModel(id);
+  const override = _modelOverrides[normalized];
+
+  // Effective tier — user override (when set) takes precedence over classifier.
+  // The harness defaults are then derived from the effective tier, so a user
+  // flipping `tier` also flips `enable_small_model_harness` etc. This matches
+  // spec 028 `tier_overrides` semantics (flipping tier flipped harness too).
+  // Fine-grained per-field overrides (e.g. override only `max_turns`) still
+  // work — they get layered on top via deepMerge.
+  const effectiveTier = override?.tier ?? derivedTier;
 
   const base: ModelCapabilities = {
-    tier,
+    tier: effectiveTier,
     context_window: SAFE_DEFAULTS.context_window,
     native_tool_calling: SAFE_DEFAULTS.native_tool_calling,
     preferred_format: resolvePreferredFormat(normalized),
-    recommended_harness: resolveHarnessDefaults(tier),
+    recommended_harness: resolveHarnessDefaults(effectiveTier),
   };
 
-  const override = _modelOverrides[normalized];
   return override ? deepMerge(base, override) : base;
 }
 
@@ -244,16 +258,19 @@ export function explainCapabilities(modelId: string): ResolvedCapabilities {
   const normalized = normalizeModelId(id);
   const { tier: derivedTier } = classifyModel(id);
   const derivedFormat = resolvePreferredFormat(normalized);
+  const override = _modelOverrides[normalized] ?? null;
+
+  // Effective tier — see comment in getCapabilities for rationale
+  const effectiveTier = override?.tier ?? derivedTier;
 
   const base: ModelCapabilities = {
-    tier: derivedTier,
+    tier: effectiveTier,
     context_window: SAFE_DEFAULTS.context_window,
     native_tool_calling: SAFE_DEFAULTS.native_tool_calling,
     preferred_format: derivedFormat,
-    recommended_harness: resolveHarnessDefaults(derivedTier),
+    recommended_harness: resolveHarnessDefaults(effectiveTier),
   };
 
-  const override = _modelOverrides[normalized] ?? null;
   const final = override ? deepMerge(base, override) : base;
 
   return {

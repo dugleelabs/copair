@@ -1,61 +1,47 @@
 /**
- * Model capabilities registry (spec 029).
+ * Model capabilities contract (spec 029).
  *
- * Extends spec 028 F-24's `small | large` tier classifier into a richer
- * per-model record covering: tier, context window, native tool-call quality,
- * preferred tool-call format, known quirks, and recommended harness flags.
+ * Provides a single lookup API — `getCapabilities(modelId)` — that future
+ * Pillar 1 features consult instead of substring-matching `modelId`. Every
+ * value in the returned record is derived by *generic* logic:
  *
- * Lookup is keyed on the post-normalization model ID (via spec 028's
- * `normalizeModelId`). Tier is resolved via `classifyModel` from spec 028 —
- * the registry layers additional fields on top so tier classification stays
- * the single source of truth.
+ *   - `tier`               → spec 028 F-24's `classifyModel`
+ *   - `preferred_format`   → family-prefix function (qwen-family → qwen-xml, etc.)
+ *   - `recommended_harness`→ tier-driven defaults (small → harness on, large → off)
+ *   - `context_window`, `native_tool_calling` → safe defaults
  *
- * Module-level invariants:
- *   - REGISTRY entries are ordered most-specific-first; first match wins.
- *   - Every shipped entry passes `ModelCapabilitiesSchema.parse` at module
- *     load (see the validation pass at the bottom of this file).
- *   - Adding a new entry is an append-only PR; no schema changes required.
- *   - Adding a new quirk is a 4-step PR (see design §3): extend QUIRK_IDS,
- *     apply to relevant entries, add consumer handling, add tests.
+ * Per-model facts that genuinely vary (e.g. a specific model's context window)
+ * are handled via user `model_overrides` in config — the escape hatch. There
+ * is no shipped per-model registry in code; copair carries no per-model
+ * branches by design. Reframed 2026-05-15 per the no-per-model-code principle.
+ *
+ * If a model surfaces protocol drift (e.g. spec 028 F-23's Hermes envelope
+ * pattern from Qwen3-Coder), the fix lives as resilient parsing inside the
+ * relevant formatter — not as a per-model entry here. The qwen-xml formatter
+ * always tries the Hermes fallback when standard parsing fails; any model
+ * whose output uses qwen-xml gets the resilient parser.
  */
 
 import { z } from 'zod';
 import { classifyModel, normalizeModelId, type ModelTier } from './model-tiers.js';
 
-// ── Quirk taxonomy ─────────────────────────────────────────────────────────
-
-/**
- * Quirk IDs the harness / formatter layers know to handle.
- *
- * Typed union so adding a new quirk requires schema + handler in the same
- * PR. Consumers reference quirks by string-literal: e.g.
- * `caps.known_quirks.includes('hermes-envelope-drift')`.
- */
-export const QUIRK_IDS = [
-  /** Spec 028 F-23 — Qwen3-Coder relapses to Hermes envelope mid-conversation.
-   *  Formatter activates the Hermes envelope fallback parser when present. */
-  'hermes-envelope-drift',
-] as const;
-
-export type QuirkId = (typeof QUIRK_IDS)[number];
-
 // ── Capability schemas ─────────────────────────────────────────────────────
 
 /**
- * Full per-model capabilities record. Every shipped registry entry conforms
- * to this schema; `getCapabilities()` always returns a fully-populated value.
+ * Full per-model capabilities record. `getCapabilities()` always returns a
+ * fully-populated value built from generic-logic-derived defaults plus
+ * (optionally) user overrides.
  */
 export const ModelCapabilitiesSchema = z.object({
   tier: z.enum(['small', 'large']),
   context_window: z.number().int().positive(),
   native_tool_calling: z.enum(['reliable', 'unreliable', 'none']),
   preferred_format: z.enum(['qwen-xml', 'dsml', 'fenced-block', 'native']),
-  known_quirks: z.array(z.enum(QUIRK_IDS)).default([]),
   recommended_harness: z.object({
     enable_small_model_harness: z.boolean(),
     max_turns: z.number().int().positive(),
     /** Per-model override of the global `config.small_models.max_tool_calls`.
-     *  Optional: when undefined, the harness falls through to the global. */
+     *  Optional: when undefined, harness falls through to the global default. */
     max_tool_calls: z.number().int().positive().optional(),
     inject_format_reminder_every_turn: z.boolean(),
   }),
@@ -64,16 +50,14 @@ export const ModelCapabilitiesSchema = z.object({
 export type ModelCapabilities = z.infer<typeof ModelCapabilitiesSchema>;
 
 /**
- * User override entry — every field optional. Deep-merged on the matched
- * registry entry (or on SAFE_DEFAULTS if no match). See design §3 + §5 for
- * the merge algorithm.
+ * User override entry — every field optional. Deep-merged on the base
+ * (generic-logic-derived) capabilities. Per design §3 + §5.
  */
 export const ModelOverrideSchema = z.object({
   tier: z.enum(['small', 'large']).optional(),
   context_window: z.number().int().positive().optional(),
   native_tool_calling: z.enum(['reliable', 'unreliable', 'none']).optional(),
   preferred_format: z.enum(['qwen-xml', 'dsml', 'fenced-block', 'native']).optional(),
-  known_quirks: z.array(z.enum(QUIRK_IDS)).optional(),
   recommended_harness: z
     .object({
       enable_small_model_harness: z.boolean().optional(),
@@ -86,32 +70,16 @@ export const ModelOverrideSchema = z.object({
 
 export type ModelOverride = z.infer<typeof ModelOverrideSchema>;
 
-// ── Registry entry shape ───────────────────────────────────────────────────
-
-export interface RegistryEntry {
-  /** Regex matched against the post-normalization model ID (lowercase, dashed). */
-  pattern: RegExp;
-  /** Human-readable family name; mirrors spec 028 F-24's `family` field. */
-  family: string;
-  /** Full capabilities record. No partial — every shipped entry is complete. */
-  capabilities: ModelCapabilities;
-}
-
-// ── Safe defaults for unknown models ───────────────────────────────────────
+// ── Safe defaults ──────────────────────────────────────────────────────────
 
 /**
- * Default capability values for unknown models. The `tier` field is omitted
- * here — it's filled in at lookup time by `classifyModel` so spec 028 F-24
- * stays the single source of truth for tier (which itself defaults to
- * `'large'` for unmatched IDs).
- *
- * Composite default for a truly unknown model is `{ tier: 'large', ...SAFE_DEFAULTS }`.
+ * Default values for fields that aren't derived dynamically (tier comes from
+ * `classifyModel`; preferred_format comes from `resolvePreferredFormat`).
+ * Users can override any of these per-model via config.
  */
-export const SAFE_DEFAULTS: Omit<ModelCapabilities, 'tier'> = {
+const SAFE_DEFAULTS: Omit<ModelCapabilities, 'tier' | 'preferred_format'> = {
   context_window: 32_768,
   native_tool_calling: 'unreliable',
-  preferred_format: 'fenced-block',
-  known_quirks: [],
   recommended_harness: {
     enable_small_model_harness: false,
     max_turns: 20,
@@ -120,69 +88,68 @@ export const SAFE_DEFAULTS: Omit<ModelCapabilities, 'tier'> = {
   },
 };
 
-// ── Registry (T-A09 populates this) ────────────────────────────────────────
+// ── Generic protocol-level routing ─────────────────────────────────────────
 
 /**
- * Per-model capabilities registry. Ordered most-specific-first; first match
- * wins. Empty placeholder; T-A09 populates with the ~50–100 model families
- * documented in design §4.
+ * Family-prefix → preferred tool-call format. Protocol-family-level, not
+ * per-model. Each `startsWith` line covers a family of N models, not just
+ * one. Adding a new family is a one-line addition.
+ *
+ * If small-model-hardening (spec 032) benchmarks reveal a family needs a
+ * different format than the prefix implies, we update this function — not a
+ * per-model table.
  */
-export const REGISTRY: RegistryEntry[] = [];
-
-// ── Module-load validation (T-A10) ─────────────────────────────────────────
+export function resolvePreferredFormat(normalizedId: string): ModelCapabilities['preferred_format'] {
+  // Qwen family (Qwen2.x, Qwen3, Qwen3-Coder, QwQ, etc.) → qwen-xml
+  if (normalizedId.startsWith('qwen') || normalizedId.startsWith('qwq')) return 'qwen-xml';
+  // DeepSeek family (V2/V3, R1, Coder) → DSML
+  if (normalizedId.startsWith('deepseek')) return 'dsml';
+  // Frontier-cloud models with reliable native tool calling
+  if (
+    normalizedId.startsWith('claude') ||
+    normalizedId.startsWith('gpt') ||
+    normalizedId.startsWith('gemini') ||
+    normalizedId.startsWith('o1') ||
+    normalizedId.startsWith('o3') ||
+    normalizedId.startsWith('o4')
+  )
+    return 'native';
+  // Default — fenced-block is the most universally-parseable for unknowns
+  return 'fenced-block';
+}
 
 /**
- * Validate every registry entry at module load. Catches malformed entries
- * developer-side before they reach production. Cost is negligible (linear
- * Zod parse over ~50–100 records, runs once per process).
+ * Tier-driven harness defaults. Two settings: small (harness engaged) or
+ * large (harness disengaged). Users override individual fields via
+ * `model_overrides` config if they need more granularity per-model.
  */
-for (const entry of REGISTRY) {
-  ModelCapabilitiesSchema.parse(entry.capabilities);
+export function resolveHarnessDefaults(tier: ModelTier): ModelCapabilities['recommended_harness'] {
+  if (tier === 'small') {
+    return {
+      enable_small_model_harness: true,
+      max_turns: 30,
+      max_tool_calls: 20,
+      inject_format_reminder_every_turn: true,
+    };
+  }
+  // Large tier — harness disengaged, generous limits
+  return SAFE_DEFAULTS.recommended_harness;
 }
 
 // ── Internal helpers ───────────────────────────────────────────────────────
 
 /**
- * Walk REGISTRY in order; return the first matching entry's capabilities, or
- * null if none match. Patterns are pre-compiled (RegExp at module load) so
- * the per-call cost is linear in the entry count.
- */
-function matchRegistry(normalizedId: string): {
-  capabilities: ModelCapabilities;
-  family: string;
-  patternSource: string;
-} | null {
-  for (const entry of REGISTRY) {
-    if (entry.pattern.test(normalizedId)) {
-      return {
-        capabilities: entry.capabilities,
-        family: entry.family,
-        patternSource: entry.pattern.source,
-      };
-    }
-  }
-  return null;
-}
-
-/**
  * Deep-merge a user `ModelOverride` onto a base `ModelCapabilities`. Per
- * design §5 + OQ-6 resolution:
- *   - Primitive fields: override wins if `!== undefined` (last-write-wins).
- *   - `known_quirks`: concat + dedupe via Set.
- *   - `recommended_harness`: field-by-field nested merge.
+ * design §5:
+ *   - Primitive fields: override wins if `!== undefined` (last-write-wins)
+ *   - `recommended_harness`: field-by-field nested merge
  */
-function deepMerge(
-  base: ModelCapabilities,
-  override: ModelOverride,
-): ModelCapabilities {
+function deepMerge(base: ModelCapabilities, override: ModelOverride): ModelCapabilities {
   return {
     tier: override.tier ?? base.tier,
     context_window: override.context_window ?? base.context_window,
     native_tool_calling: override.native_tool_calling ?? base.native_tool_calling,
     preferred_format: override.preferred_format ?? base.preferred_format,
-    known_quirks: override.known_quirks
-      ? Array.from(new Set([...base.known_quirks, ...override.known_quirks]))
-      : base.known_quirks,
     recommended_harness: {
       enable_small_model_harness:
         override.recommended_harness?.enable_small_model_harness ??
@@ -190,8 +157,7 @@ function deepMerge(
       max_turns:
         override.recommended_harness?.max_turns ?? base.recommended_harness.max_turns,
       max_tool_calls:
-        override.recommended_harness?.max_tool_calls ??
-        base.recommended_harness.max_tool_calls,
+        override.recommended_harness?.max_tool_calls ?? base.recommended_harness.max_tool_calls,
       inject_format_reminder_every_turn:
         override.recommended_harness?.inject_format_reminder_every_turn ??
         base.recommended_harness.inject_format_reminder_every_turn,
@@ -199,45 +165,18 @@ function deepMerge(
   };
 }
 
-/**
- * Module-level state for F-09 deduplication. Records normalized IDs we've
- * already warned about so the warning fires at most once per session per
- * unknown model. Suppressed entirely when an override is set for the model.
- */
-const warnedUnknownModels = new Set<string>();
-
-function maybeWarnUnknown(normalizedId: string, hasOverride: boolean): void {
-  if (hasOverride) return; // user has explicitly configured this model
-  if (warnedUnknownModels.has(normalizedId)) return;
-  warnedUnknownModels.add(normalizedId);
-  // Exact text required by requirements F-09:
-  console.error(
-    `[INFO] Unknown model '${normalizedId}'; using safe defaults. ` +
-      `See https://github.com/dugleelabs/copair/blob/main/docs/model-capabilities.md ` +
-      `to contribute an entry.`,
-  );
-}
-
-/** Internal — reset the F-09 dedupe set. Test-only export. */
-export function _resetCapabilitiesWarningCacheForTests(): void {
-  warnedUnknownModels.clear();
-}
-
 // ── Config access ──────────────────────────────────────────────────────────
 
 /**
  * Per-process pointer to the loaded config's `model_overrides` map. Set by
- * the config loader via `setModelOverrides`; defaults to empty until the
- * config layer wires it up (T-A06 / T-A07). This indirection avoids
- * `model-capabilities.ts` taking a hard dependency on the config module's
- * shape — the config loader pushes overrides in, this module reads them out.
+ * the config loader via `setModelOverrides`; defaults to empty until wired up.
+ * Keys must already be normalized (use `normalizeModelId`) before passing.
  */
 let _modelOverrides: Record<string, ModelOverride> = {};
 
 /**
  * Replace the active `model_overrides` map. Called by the config loader
- * after parsing + normalizing the user's config. Keys must already be
- * normalized (use `normalizeModelId`) before passing.
+ * after parsing + normalizing the user's config.
  */
 export function setModelOverrides(overrides: Record<string, ModelOverride>): void {
   _modelOverrides = overrides;
@@ -256,24 +195,28 @@ export function _getModelOverridesForTests(): Record<string, ModelOverride> {
  * Pipeline:
  *   1. Normalize via spec 028 `normalizeModelId`
  *   2. Derive `tier` via spec 028 `classifyModel` (single source of truth)
- *   3. Look up the registry; fall back to `{ tier, ...SAFE_DEFAULTS }` on miss
- *   4. Deep-merge any user `model_overrides[normalizedId]` on top
+ *   3. Derive `preferred_format` via `resolvePreferredFormat` (family-prefix)
+ *   4. Derive `recommended_harness` via `resolveHarnessDefaults(tier)`
+ *   5. Fill `context_window` / `native_tool_calling` from `SAFE_DEFAULTS`
+ *   6. Deep-merge any user `model_overrides[normalizedId]` on top
  *
- * Never throws. Empty / null / undefined `modelId` resolves to the same safe
- * defaults as an unknown ID.
- *
- * Side effect: on a registry miss with no user override, emits a one-time
- * `[INFO]` warning per F-09.
+ * Never throws. Empty / null / undefined `modelId` resolves to safe defaults
+ * (`tier: 'large'` from F-24's unknown-default; `preferred_format: 'fenced-block'`).
  */
 export function getCapabilities(modelId: string | null | undefined): ModelCapabilities {
-  const normalized = normalizeModelId(modelId ?? '');
-  const { tier } = classifyModel(modelId ?? '');
-  const match = matchRegistry(normalized);
-  const base: ModelCapabilities = match ? match.capabilities : { tier, ...SAFE_DEFAULTS };
+  const id = modelId ?? '';
+  const normalized = normalizeModelId(id);
+  const { tier } = classifyModel(id);
+
+  const base: ModelCapabilities = {
+    tier,
+    context_window: SAFE_DEFAULTS.context_window,
+    native_tool_calling: SAFE_DEFAULTS.native_tool_calling,
+    preferred_format: resolvePreferredFormat(normalized),
+    recommended_harness: resolveHarnessDefaults(tier),
+  };
+
   const override = _modelOverrides[normalized];
-  if (!match) {
-    maybeWarnUnknown(normalized, override !== undefined);
-  }
   return override ? deepMerge(base, override) : base;
 }
 
@@ -282,31 +225,48 @@ export function getCapabilities(modelId: string | null | undefined): ModelCapabi
 export interface ResolvedCapabilities {
   modelId: string;
   normalizedId: string;
-  matchedEntry: { family: string; pattern: string } | null;
-  baseCapabilities: ModelCapabilities;
+  tier: { value: ModelTier; source: 'classifier' | 'override' };
+  preferred_format: {
+    value: ModelCapabilities['preferred_format'];
+    source: 'family-prefix' | 'override';
+  };
   overrideApplied: ModelOverride | null;
   finalCapabilities: ModelCapabilities;
 }
 
 /**
- * Return the full resolution trace for a model ID. Used by the
- * `--explain-model` CLI flag to surface registry decisions for debugging.
- *
- * Unlike `getCapabilities`, this does NOT emit the F-09 warning — it's a
- * diagnostic-only read path, not a production lookup.
+ * Return the full resolution trace for a model ID. Used by `--explain-model`
+ * CLI flag to surface where each value came from. Read-only; no warning side
+ * effects.
  */
 export function explainCapabilities(modelId: string): ResolvedCapabilities {
-  const normalized = normalizeModelId(modelId ?? '');
-  const { tier } = classifyModel(modelId ?? '');
-  const match = matchRegistry(normalized);
-  const base: ModelCapabilities = match ? match.capabilities : { tier, ...SAFE_DEFAULTS };
+  const id = modelId ?? '';
+  const normalized = normalizeModelId(id);
+  const { tier: derivedTier } = classifyModel(id);
+  const derivedFormat = resolvePreferredFormat(normalized);
+
+  const base: ModelCapabilities = {
+    tier: derivedTier,
+    context_window: SAFE_DEFAULTS.context_window,
+    native_tool_calling: SAFE_DEFAULTS.native_tool_calling,
+    preferred_format: derivedFormat,
+    recommended_harness: resolveHarnessDefaults(derivedTier),
+  };
+
   const override = _modelOverrides[normalized] ?? null;
   const final = override ? deepMerge(base, override) : base;
+
   return {
-    modelId,
+    modelId: id,
     normalizedId: normalized,
-    matchedEntry: match ? { family: match.family, pattern: match.patternSource } : null,
-    baseCapabilities: base,
+    tier: {
+      value: final.tier,
+      source: override?.tier !== undefined ? 'override' : 'classifier',
+    },
+    preferred_format: {
+      value: final.preferred_format,
+      source: override?.preferred_format !== undefined ? 'override' : 'family-prefix',
+    },
     overrideApplied: override,
     finalCapabilities: final,
   };

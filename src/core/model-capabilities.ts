@@ -24,6 +24,7 @@
 
 import { z } from 'zod';
 import { classifyModel, normalizeModelId, type ModelTier } from './model-tiers.js';
+import shippedData from '../../data/model-capabilities.json' assert { type: 'json' };
 
 // ── Capability schemas ─────────────────────────────────────────────────────
 
@@ -171,6 +172,46 @@ function deepMerge(base: ModelCapabilities, override: ModelOverride): ModelCapab
   };
 }
 
+// ── Shipped sparse data (data/model-capabilities.json) ────────────────────
+
+/**
+ * Compiled entry from the shipped JSON data file. Patterns are compiled
+ * once at module load; capabilities are `ModelOverride`-shape (deep-partial)
+ * so individual fields layer onto base defaults without forcing full records.
+ */
+interface ShippedEntry {
+  pattern: RegExp;
+  family: string;
+  capabilities: ModelOverride;
+}
+
+const SHIPPED_ENTRIES: ShippedEntry[] = (() => {
+  const entries: ShippedEntry[] = [];
+  for (const raw of shippedData.entries) {
+    // Validate each entry's capabilities shape against ModelOverrideSchema at
+    // module load — catches malformed JSON developer-side before production.
+    const caps = ModelOverrideSchema.parse(raw.capabilities);
+    entries.push({
+      pattern: new RegExp(raw.pattern),
+      family: raw.family,
+      capabilities: caps,
+    });
+  }
+  return entries;
+})();
+
+/**
+ * Walk SHIPPED_ENTRIES in order; return the first matching entry, or null
+ * if none match. Mirrors spec 028 F-24's classifier ordering: most-specific
+ * patterns appear first in the JSON file.
+ */
+function lookupShippedData(normalizedId: string): ShippedEntry | null {
+  for (const entry of SHIPPED_ENTRIES) {
+    if (entry.pattern.test(normalizedId)) return entry;
+  }
+  return null;
+}
+
 // ── Config access ──────────────────────────────────────────────────────────
 
 /**
@@ -223,13 +264,22 @@ export function getCapabilities(modelId: string | null | undefined): ModelCapabi
   // work — they get layered on top via deepMerge.
   const effectiveTier = override?.tier ?? derivedTier;
 
-  const base: ModelCapabilities = {
+  let base: ModelCapabilities = {
     tier: effectiveTier,
     context_window: SAFE_DEFAULTS.context_window,
     native_tool_calling: SAFE_DEFAULTS.native_tool_calling,
     preferred_format: resolvePreferredFormat(normalized),
     recommended_harness: resolveHarnessDefaults(effectiveTier),
   };
+
+  // Layer shipped sparse data (data/model-capabilities.json) on top of base.
+  // This is "almost every model we can reasonably cover" data — context windows,
+  // native_tool_calling reliability for frontier models, etc. Pure data, no
+  // code branches. User `model_overrides` still wins below.
+  const shipped = lookupShippedData(normalized);
+  if (shipped) {
+    base = deepMerge(base, shipped.capabilities);
+  }
 
   return override ? deepMerge(base, override) : base;
 }
@@ -242,8 +292,12 @@ export interface ResolvedCapabilities {
   tier: { value: ModelTier; source: 'classifier' | 'override' };
   preferred_format: {
     value: ModelCapabilities['preferred_format'];
-    source: 'family-prefix' | 'override';
+    source: 'family-prefix' | 'shipped-data' | 'override';
   };
+  /** Which shipped-data entry (if any) contributed to the resolved capabilities.
+   *  Helps users see "context_window=200000 because the shipped entry for Claude
+   *  matched my model ID, not the safe default."  null when no shipped entry hit. */
+  shippedDataMatch: { family: string; pattern: string } | null;
   overrideApplied: ModelOverride | null;
   finalCapabilities: ModelCapabilities;
 }
@@ -259,11 +313,12 @@ export function explainCapabilities(modelId: string): ResolvedCapabilities {
   const { tier: derivedTier } = classifyModel(id);
   const derivedFormat = resolvePreferredFormat(normalized);
   const override = _modelOverrides[normalized] ?? null;
+  const shipped = lookupShippedData(normalized);
 
   // Effective tier — see comment in getCapabilities for rationale
   const effectiveTier = override?.tier ?? derivedTier;
 
-  const base: ModelCapabilities = {
+  let base: ModelCapabilities = {
     tier: effectiveTier,
     context_window: SAFE_DEFAULTS.context_window,
     native_tool_calling: SAFE_DEFAULTS.native_tool_calling,
@@ -271,7 +326,15 @@ export function explainCapabilities(modelId: string): ResolvedCapabilities {
     recommended_harness: resolveHarnessDefaults(effectiveTier),
   };
 
+  if (shipped) base = deepMerge(base, shipped.capabilities);
+
   const final = override ? deepMerge(base, override) : base;
+
+  // preferred_format source resolution (most-specific-first):
+  // override > shipped-data > family-prefix
+  let formatSource: 'family-prefix' | 'shipped-data' | 'override' = 'family-prefix';
+  if (override?.preferred_format !== undefined) formatSource = 'override';
+  else if (shipped?.capabilities.preferred_format !== undefined) formatSource = 'shipped-data';
 
   return {
     modelId: id,
@@ -282,8 +345,11 @@ export function explainCapabilities(modelId: string): ResolvedCapabilities {
     },
     preferred_format: {
       value: final.preferred_format,
-      source: override?.preferred_format !== undefined ? 'override' : 'family-prefix',
+      source: formatSource,
     },
+    shippedDataMatch: shipped
+      ? { family: shipped.family, pattern: shipped.pattern.source }
+      : null,
     overrideApplied: override,
     finalCapabilities: final,
   };

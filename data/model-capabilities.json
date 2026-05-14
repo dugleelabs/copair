@@ -1,0 +1,424 @@
+{
+  "$schema_version": 1,
+  "_comment": "Sparse per-model capability data shipped with copair (spec 029 T-A09). Entries layer on top of SAFE_DEFAULTS + generic-derived fields (tier from spec 028 F-24, preferred_format from family-prefix). User `model_overrides` config wins over anything here. Patterns are regex strings against the post-normalization model ID. Ordered most-specific-first; first match wins. Values are conservative — when uncertain, smaller (we never claim a context we cannot deliver).",
+  "_principle": "This file is data, not code. Adding a model is a JSON PR with no TypeScript review needed. Code carries no per-model branches per the no-per-model-code rule (memory/feedback_no_per_model_code.md).",
+  "entries": [
+    {
+      "pattern": "^claude-(?:opus|sonnet|haiku)",
+      "family": "Anthropic Claude (modern)",
+      "capabilities": {
+        "context_window": 200000,
+        "native_tool_calling": "reliable"
+      }
+    },
+    {
+      "pattern": "^claude-3",
+      "family": "Anthropic Claude 3.x",
+      "capabilities": {
+        "context_window": 200000,
+        "native_tool_calling": "reliable"
+      }
+    },
+    {
+      "pattern": "^gpt-5",
+      "family": "OpenAI GPT-5",
+      "capabilities": {
+        "context_window": 400000,
+        "native_tool_calling": "reliable"
+      }
+    },
+    {
+      "pattern": "^gpt-4o",
+      "family": "OpenAI GPT-4o",
+      "capabilities": {
+        "context_window": 128000,
+        "native_tool_calling": "reliable"
+      }
+    },
+    {
+      "pattern": "^gpt-4",
+      "family": "OpenAI GPT-4",
+      "capabilities": {
+        "context_window": 128000,
+        "native_tool_calling": "reliable"
+      }
+    },
+    {
+      "pattern": "^o[134](?:-mini|-pro)?\\b",
+      "family": "OpenAI o-series",
+      "capabilities": {
+        "context_window": 200000,
+        "native_tool_calling": "reliable"
+      }
+    },
+    {
+      "pattern": "^gemini-(?:2-5|3)",
+      "family": "Google Gemini 2.5+",
+      "capabilities": {
+        "context_window": 1000000,
+        "native_tool_calling": "reliable"
+      }
+    },
+    {
+      "pattern": "^gemini-2",
+      "family": "Google Gemini 2.x",
+      "capabilities": {
+        "context_window": 1000000,
+        "native_tool_calling": "reliable"
+      }
+    },
+    {
+      "pattern": "^grok-4",
+      "family": "xAI Grok 4",
+      "capabilities": {
+        "context_window": 256000,
+        "native_tool_calling": "reliable"
+      }
+    },
+    {
+      "pattern": "^grok-[1-3]",
+      "family": "xAI Grok 1-3",
+      "capabilities": {
+        "context_window": 131072,
+        "native_tool_calling": "reliable"
+      }
+    },
+    {
+      "pattern": "^kimi-k2",
+      "family": "Moonshot Kimi K2",
+      "capabilities": {
+        "context_window": 200000
+      }
+    },
+    {
+      "pattern": "^minimax-m1",
+      "family": "MiniMax M1",
+      "capabilities": {
+        "context_window": 1000000
+      }
+    },
+    {
+      "pattern": "^minimax-m[2-9]",
+      "family": "MiniMax M2+",
+      "capabilities": {
+        "context_window": 200000
+      }
+    },
+
+    {
+      "pattern": "^qwen3-coder-480b",
+      "family": "Qwen3-Coder 480B",
+      "capabilities": {
+        "context_window": 262144
+      }
+    },
+    {
+      "pattern": "^qwen3-(?:vl-)?235b",
+      "family": "Qwen3 235B",
+      "capabilities": {
+        "context_window": 262144
+      }
+    },
+    {
+      "pattern": "^qwen3-next-80b",
+      "family": "Qwen3-Next 80B",
+      "capabilities": {
+        "context_window": 262144
+      }
+    },
+    {
+      "pattern": "^qwen3-coder-30b",
+      "family": "Qwen3-Coder 30B",
+      "capabilities": {
+        "context_window": 262144
+      }
+    },
+    {
+      "pattern": "^qwen3-(?:vl-)?(?:30b-a3b|32b)",
+      "family": "Qwen3 32B/30B",
+      "capabilities": {
+        "context_window": 131072
+      }
+    },
+    {
+      "pattern": "^qwen2(?:-5)?-(?:coder-)?(?:32b|72b)",
+      "family": "Qwen2/2.5 32B/72B",
+      "capabilities": {
+        "context_window": 131072
+      }
+    },
+    {
+      "pattern": "^qwen3-(?:vl-)?(?:0-6|1-7|4|8|14)b",
+      "family": "Qwen3 small (0.6B–14B)",
+      "capabilities": {
+        "context_window": 131072
+      }
+    },
+    {
+      "pattern": "^qwen2(?:-5)?-(?:coder-)?(?:7|14)b",
+      "family": "Qwen2/2.5 7B/14B",
+      "capabilities": {
+        "context_window": 131072
+      }
+    },
+
+    {
+      "pattern": "^deepseek-(?:v[34]|r[12])(?!.*-distill)",
+      "family": "DeepSeek frontier (V3.x / R1)",
+      "capabilities": {
+        "context_window": 131072
+      }
+    },
+    {
+      "pattern": "^deepseek-(?:chat|reasoner)",
+      "family": "DeepSeek API alias",
+      "capabilities": {
+        "context_window": 131072
+      }
+    },
+    {
+      "pattern": "^deepseek-r1.*?-(?:1-5|7|8)b",
+      "family": "DeepSeek R1 distill ≤8B",
+      "capabilities": {
+        "context_window": 131072
+      }
+    },
+    {
+      "pattern": "^deepseek-r1.*?-(?:14|32|70)b",
+      "family": "DeepSeek R1 distill ≥14B",
+      "capabilities": {
+        "context_window": 131072
+      }
+    },
+    {
+      "pattern": "^deepseek-coder-1-3b",
+      "family": "DeepSeek Coder 1.3B",
+      "capabilities": {
+        "context_window": 16384
+      }
+    },
+
+    {
+      "pattern": "^llama-?4-(?:scout|maverick)",
+      "family": "Llama 4 Scout / Maverick",
+      "capabilities": {
+        "context_window": 1000000
+      }
+    },
+    {
+      "pattern": "^llama-?4-behemoth",
+      "family": "Llama 4 Behemoth",
+      "capabilities": {
+        "context_window": 256000
+      }
+    },
+    {
+      "pattern": "^llama-?[34](?:-\\d+)*-(?:70b|72b|90b|405b)",
+      "family": "Llama 3.x large (70B+)",
+      "capabilities": {
+        "context_window": 131072
+      }
+    },
+    {
+      "pattern": "^llama-?[34](?:-\\d+)*-(?:1b|3b|7b|8b|11b)",
+      "family": "Llama 3.x small",
+      "capabilities": {
+        "context_window": 131072
+      }
+    },
+
+    {
+      "pattern": "^codestral",
+      "family": "Mistral Codestral",
+      "capabilities": {
+        "context_window": 256000
+      }
+    },
+    {
+      "pattern": "^(?:mistral|pixtral)-large",
+      "family": "Mistral / Pixtral Large",
+      "capabilities": {
+        "context_window": 131072
+      }
+    },
+    {
+      "pattern": "^mistral-(?:medium|small-[34])",
+      "family": "Mistral Medium / Small 3+",
+      "capabilities": {
+        "context_window": 131072
+      }
+    },
+    {
+      "pattern": "^mistral-nemo",
+      "family": "Mistral Nemo 12B",
+      "capabilities": {
+        "context_window": 131072
+      }
+    },
+    {
+      "pattern": "^mixtral-8x22b",
+      "family": "Mixtral 8x22B",
+      "capabilities": {
+        "context_window": 65536
+      }
+    },
+    {
+      "pattern": "^mixtral-8x7b",
+      "family": "Mixtral 8x7B",
+      "capabilities": {
+        "context_window": 32768
+      }
+    },
+    {
+      "pattern": "^ministral-(?:3|7|14)b",
+      "family": "Ministral",
+      "capabilities": {
+        "context_window": 131072
+      }
+    },
+
+    {
+      "pattern": "^glm-(?:[5-9]|4-[5-9])",
+      "family": "GLM 4.5+",
+      "capabilities": {
+        "context_window": 131072
+      }
+    },
+    {
+      "pattern": "^glm-4-9b",
+      "family": "GLM-4 9B",
+      "capabilities": {
+        "context_window": 131072
+      }
+    },
+
+    {
+      "pattern": "^phi-?4-(?:mini|multimodal)",
+      "family": "Phi-4 small",
+      "capabilities": {
+        "context_window": 131072
+      }
+    },
+    {
+      "pattern": "^phi-?4(?:-14b)?\\b",
+      "family": "Phi-4 14B",
+      "capabilities": {
+        "context_window": 131072
+      }
+    },
+    {
+      "pattern": "^phi-?3(?:-5)?-(?:mini|small)",
+      "family": "Phi-3 small",
+      "capabilities": {
+        "context_window": 131072
+      }
+    },
+
+    {
+      "pattern": "^gemma-?[3]-?(?:1b|2b|4b|9b|12b|27b)",
+      "family": "Gemma 3",
+      "capabilities": {
+        "context_window": 131072
+      }
+    },
+    {
+      "pattern": "^gemma-?2-?(?:9b|27b)",
+      "family": "Gemma 2 large (8k context — predates extended-context release)",
+      "capabilities": {
+        "context_window": 8192
+      }
+    },
+    {
+      "pattern": "^gemma-?2-?(?:2b|4b)",
+      "family": "Gemma 2 small (8k context)",
+      "capabilities": {
+        "context_window": 8192
+      }
+    },
+
+    {
+      "pattern": "^command-(?:a|r-plus|r7b)",
+      "family": "Cohere Command R+ / R7B / A",
+      "capabilities": {
+        "context_window": 128000
+      }
+    },
+    {
+      "pattern": "^command-r",
+      "family": "Cohere Command R",
+      "capabilities": {
+        "context_window": 128000
+      }
+    },
+
+    {
+      "pattern": "^granite-?[34](?:-\\d+)*-(?:2|3|8|30)b",
+      "family": "IBM Granite 3+/4 small-to-mid",
+      "capabilities": {
+        "context_window": 131072
+      }
+    },
+
+    {
+      "pattern": "^nemotron",
+      "family": "NVIDIA Nemotron (any size)",
+      "capabilities": {
+        "context_window": 131072
+      }
+    },
+    {
+      "pattern": "^(?:llama-?[34](?:-\\d+)*-)?nemotron",
+      "family": "Llama-Nemotron variants",
+      "capabilities": {
+        "context_window": 131072
+      }
+    },
+
+    {
+      "pattern": "^jamba-?(?:large|2-?large|mini|2-?mini)",
+      "family": "AI21 Jamba Large / Mini",
+      "capabilities": {
+        "context_window": 256000
+      }
+    },
+
+    {
+      "pattern": "^nova-(?:pro|premier|lite)",
+      "family": "Amazon Nova Pro/Premier/Lite",
+      "capabilities": {
+        "context_window": 300000
+      }
+    },
+    {
+      "pattern": "^nova-micro",
+      "family": "Amazon Nova Micro",
+      "capabilities": {
+        "context_window": 128000
+      }
+    },
+
+    {
+      "pattern": "^gpt-?oss-?(?:20|120)b",
+      "family": "gpt-oss (open-weight)",
+      "capabilities": {
+        "context_window": 131072
+      }
+    },
+
+    {
+      "pattern": "^reka-(?:core|flash|edge)",
+      "family": "Reka",
+      "capabilities": {
+        "context_window": 131072
+      }
+    },
+
+    {
+      "pattern": "^yi-coder-(?:1-5|9)b",
+      "family": "Yi-Coder small",
+      "capabilities": {
+        "context_window": 131072
+      }
+    }
+  ]
+}

@@ -21,6 +21,7 @@ import { FencedBlockFormatter } from '../../src/core/formats/fenced-block.js';
 import { SmallModelHarness, resolveMaxToolCalls } from '../../src/core/small-model-harness.js';
 import {
   getCapabilities,
+  explainCapabilities,
   setModelOverrides,
 } from '../../src/core/model-capabilities.js';
 
@@ -169,6 +170,7 @@ describe('Spec 029 parity — capabilities derivation is purely generic', () => 
     const c = getCapabilities('totally-new-model-no-one-has-seen-2099');
     expect(c.tier).toBe('large'); // F-24's safe default for unknown
     expect(c.preferred_format).toBe('fenced-block'); // family-prefix fallback
+    expect(c.context_window).toBe(32_768); // SAFE_DEFAULTS — no shipped entry matched
     expect(c.recommended_harness.enable_small_model_harness).toBe(false);
   });
 
@@ -180,5 +182,50 @@ describe('Spec 029 parity — capabilities derivation is purely generic', () => 
     expect(c.tier).toBe('small');
     expect(c.preferred_format).toBe('qwen-xml');
     expect(c.recommended_harness.enable_small_model_harness).toBe(true);
+  });
+});
+
+describe('Spec 029 — shipped sparse JSON data (data/model-capabilities.json)', () => {
+  it('Claude family gets 200k context from shipped data, not 32k safe default', () => {
+    const c = getCapabilities('claude-opus-4-7');
+    expect(c.context_window).toBe(200_000);
+    expect(c.native_tool_calling).toBe('reliable');
+  });
+
+  it('GPT-5 family gets 400k context', () => {
+    expect(getCapabilities('gpt-5').context_window).toBe(400_000);
+  });
+
+  it('Gemini 2.5 gets 1M context', () => {
+    expect(getCapabilities('gemini-2-5-pro').context_window).toBe(1_000_000);
+  });
+
+  it('Qwen3-Coder 480B gets 256k context via shipped data — cross-host normalized', () => {
+    expect(getCapabilities('qwen.qwen3-coder-480b-a35b-v1:0').context_window).toBe(262_144);
+    expect(getCapabilities('Qwen/Qwen3-Coder-480B-A35B-Instruct').context_window).toBe(262_144);
+  });
+
+  it('Qwen2.5-Coder 14B small gets 128k context (matches shipped entry)', () => {
+    expect(getCapabilities('qwen2.5-coder:14b').context_window).toBe(131_072);
+  });
+
+  it('User model_overrides wins over shipped data', () => {
+    setModelOverrides({
+      'claude-opus-4-7': { context_window: 50_000 }, // user nerfs context
+    });
+    expect(getCapabilities('claude-opus-4-7').context_window).toBe(50_000);
+  });
+
+  it('explainCapabilities surfaces the shipped-data match for Claude', () => {
+    const ex = explainCapabilities('claude-opus-4-7');
+    expect(ex.shippedDataMatch).not.toBeNull();
+    expect(ex.shippedDataMatch?.family).toMatch(/Claude/);
+    expect(ex.finalCapabilities.context_window).toBe(200_000);
+  });
+
+  it('explainCapabilities reports null shippedDataMatch for unknown models', () => {
+    const ex = explainCapabilities('something-nobody-knows-2099');
+    expect(ex.shippedDataMatch).toBeNull();
+    expect(ex.finalCapabilities.context_window).toBe(32_768);
   });
 });

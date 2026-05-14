@@ -51,6 +51,14 @@ function formatPretty(r: ResolvedCapabilities): string {
   lines.push(`Context window:     ${r.finalCapabilities.context_window}`);
   lines.push(`Native tool calls:  ${r.finalCapabilities.native_tool_calling}`);
   lines.push('');
+  if (r.shippedDataMatch) {
+    lines.push(
+      `Shipped data match: ${r.shippedDataMatch.family}  (pattern: /${r.shippedDataMatch.pattern}/)`,
+    );
+  } else {
+    lines.push('Shipped data match: none (using safe defaults — context_window may be conservative)');
+  }
+  lines.push('');
   lines.push('Recommended harness:');
   const h = r.finalCapabilities.recommended_harness;
   lines.push(`  enable_small_model_harness:        ${h.enable_small_model_harness}`);

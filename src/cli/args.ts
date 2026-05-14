@@ -22,6 +22,10 @@ export interface CliOptions {
   resume?: string | true;
   /** Explicit small-model override: true = force on, false = force off, undefined = auto-detect. */
   smallModel?: boolean;
+  /** Spec 029: when set, print resolved model capabilities and exit. */
+  explainModel?: string;
+  /** Companion flag for --explain-model; emits single-line JSON instead of pretty-print. */
+  json?: boolean;
 }
 
 export function parseArgs(argv: string[] = process.argv, versionString?: string): CliOptions {
@@ -38,6 +42,11 @@ export function parseArgs(argv: string[] = process.argv, versionString?: string)
     .option('--resume [identifier]', 'Resume a previous session (use "latest" for most recent)')
     .option('--small-model', 'Force small-model mode on for this session')
     .option('--no-small-model', 'Force small-model mode off for this session')
+    .option(
+      '--explain-model <id>',
+      'Print resolved capabilities for a model ID and exit (does not start a session)',
+    )
+    .option('--json', 'When used with --explain-model, emit single-line JSON instead of pretty-print')
     .parse(argv);
 
   const opts = program.opts();
@@ -55,5 +64,7 @@ export function parseArgs(argv: string[] = process.argv, versionString?: string)
     debug: opts.debug || process.env.DEBUG === 'copair',
     resume: opts.resume,
     smallModel,
+    explainModel: opts.explainModel,
+    json: opts.json,
   };
 }

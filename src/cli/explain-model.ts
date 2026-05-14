@@ -49,6 +49,7 @@ function formatPretty(r: ResolvedCapabilities): string {
     `Preferred format:   ${r.preferred_format.value}  (source: ${r.preferred_format.source})`,
   );
   lines.push(`Context window:     ${r.finalCapabilities.context_window}`);
+  lines.push(`Max output tokens:  ${r.finalCapabilities.max_tokens}`);
   lines.push(`Native tool calls:  ${r.finalCapabilities.native_tool_calling}`);
   lines.push('');
   if (r.shippedDataMatch) {

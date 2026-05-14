@@ -46,6 +46,7 @@ const ResolvedCapabilitiesSchema = z.object({
   finalCapabilities: z.object({
     tier: z.enum(['small', 'large']),
     context_window: z.number().int().positive(),
+    max_tokens: z.number().int().positive(),
     native_tool_calling: z.enum(['reliable', 'unreliable', 'none']),
     preferred_format: z.enum(['qwen-xml', 'dsml', 'fenced-block', 'native']),
     recommended_harness: z.object({

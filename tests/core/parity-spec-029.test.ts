@@ -190,6 +190,21 @@ describe('Spec 029 — shipped sparse JSON data (data/model-capabilities.json)',
     const c = getCapabilities('claude-opus-4-7');
     expect(c.context_window).toBe(200_000);
     expect(c.native_tool_calling).toBe('reliable');
+    expect(c.max_tokens).toBe(32_000); // Anthropic Opus output cap
+  });
+
+  it('max_tokens differs by family — GPT-5 gets 16384, GPT-5-mini gets 4096', () => {
+    expect(getCapabilities('gpt-5').max_tokens).toBe(16_384);
+    expect(getCapabilities('gpt-5-mini').max_tokens).toBe(4_096);
+  });
+
+  it('Unknown models get 4096 max_tokens safe default', () => {
+    expect(getCapabilities('unknown-2099').max_tokens).toBe(4_096);
+  });
+
+  it('User override of max_tokens wins over shipped data', () => {
+    setModelOverrides({ 'claude-opus-4-7': { max_tokens: 200 } });
+    expect(getCapabilities('claude-opus-4-7').max_tokens).toBe(200);
   });
 
   it('GPT-5 family gets 400k context', () => {

@@ -36,6 +36,15 @@ import shippedData from '../../data/model-capabilities.json' assert { type: 'jso
 export const ModelCapabilitiesSchema = z.object({
   tier: z.enum(['small', 'large']),
   context_window: z.number().int().positive(),
+  /**
+   * Maximum output tokens the model can generate in a single response.
+   * Distinct from `context_window` (total prompt + completion). Real
+   * per-family variation: frontier-cloud models often allow 16k-128k
+   * output; many open-weight models cap at 4-8k. When a provider config
+   * doesn't override this, copair uses the value here as the cap to
+   * avoid silent truncation.
+   */
+  max_tokens: z.number().int().positive(),
   native_tool_calling: z.enum(['reliable', 'unreliable', 'none']),
   preferred_format: z.enum(['qwen-xml', 'dsml', 'fenced-block', 'native']),
   recommended_harness: z.object({
@@ -57,6 +66,7 @@ export type ModelCapabilities = z.infer<typeof ModelCapabilitiesSchema>;
 export const ModelOverrideSchema = z.object({
   tier: z.enum(['small', 'large']).optional(),
   context_window: z.number().int().positive().optional(),
+  max_tokens: z.number().int().positive().optional(),
   native_tool_calling: z.enum(['reliable', 'unreliable', 'none']).optional(),
   preferred_format: z.enum(['qwen-xml', 'dsml', 'fenced-block', 'native']).optional(),
   recommended_harness: z
@@ -80,6 +90,9 @@ export type ModelOverride = z.infer<typeof ModelOverrideSchema>;
  */
 const SAFE_DEFAULTS: Omit<ModelCapabilities, 'tier' | 'preferred_format'> = {
   context_window: 32_768,
+  /** Conservative default for unknown models. Most modern APIs accept at
+   *  least 4k output. Shipped JSON overrides for families with higher caps. */
+  max_tokens: 4_096,
   native_tool_calling: 'unreliable',
   recommended_harness: {
     enable_small_model_harness: false,
@@ -155,6 +168,7 @@ function deepMerge(base: ModelCapabilities, override: ModelOverride): ModelCapab
   return {
     tier: override.tier ?? base.tier,
     context_window: override.context_window ?? base.context_window,
+    max_tokens: override.max_tokens ?? base.max_tokens,
     native_tool_calling: override.native_tool_calling ?? base.native_tool_calling,
     preferred_format: override.preferred_format ?? base.preferred_format,
     recommended_harness: {
@@ -267,6 +281,7 @@ export function getCapabilities(modelId: string | null | undefined): ModelCapabi
   let base: ModelCapabilities = {
     tier: effectiveTier,
     context_window: SAFE_DEFAULTS.context_window,
+    max_tokens: SAFE_DEFAULTS.max_tokens,
     native_tool_calling: SAFE_DEFAULTS.native_tool_calling,
     preferred_format: resolvePreferredFormat(normalized),
     recommended_harness: resolveHarnessDefaults(effectiveTier),
@@ -321,6 +336,7 @@ export function explainCapabilities(modelId: string): ResolvedCapabilities {
   let base: ModelCapabilities = {
     tier: effectiveTier,
     context_window: SAFE_DEFAULTS.context_window,
+    max_tokens: SAFE_DEFAULTS.max_tokens,
     native_tool_calling: SAFE_DEFAULTS.native_tool_calling,
     preferred_format: derivedFormat,
     recommended_harness: resolveHarnessDefaults(effectiveTier),

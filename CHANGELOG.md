@@ -2,6 +2,49 @@
 
 All notable changes to copair are documented here.
 
+## [Unreleased] — Model Capabilities Registry (spec 029)
+
+A single contract — `getCapabilities(modelId)` — replaces ad-hoc per-model substring matches across the codebase. Future Pillar 1 features consult this contract instead of writing `if (modelId.includes('qwen'))` style branches. The reframe established a durable principle: **generic protocol-level logic in code, sparse per-model data in JSON, resilient parsers handle drift on the fly, user `model_overrides` config as the escape hatch.**
+
+### Added
+
+- **`ModelCapabilities` contract + `getCapabilities(modelId)` lookup API** — `src/core/model-capabilities.ts` defines a Zod-validated record with `tier`, `context_window`, `max_tokens`, `native_tool_calling`, `preferred_format`, and `recommended_harness` fields. The lookup pipeline is purely generic: normalize the model ID (spec 028 F-24's `normalizeModelId`) → derive tier via `classifyModel` → derive `preferred_format` via family-prefix function (Qwen → `qwen-xml`, DeepSeek → `dsml`, Claude/GPT/Gemini → `native`, else → `fenced-block`) → derive `recommended_harness` from tier → layer shipped JSON data → layer user `model_overrides`. Each step is documented and inspectable. Never throws; null/undefined/empty model IDs resolve to safe defaults.
+
+- **Sparse `data/model-capabilities.json` shipped with copair** — ~60 family-prefix entries covering frontier cloud (Claude, GPT, Gemini, Grok, Kimi K2, MiniMax, etc.), frontier open-weight (Qwen3-Coder 480B/30B/Next, Qwen3-Max, DeepSeek V3.x/R1, Llama 4 Scout/Maverick, Codestral, Magistral, Mistral Large, Mixtral, GLM 4.5+, gpt-oss, AI21 Jamba, Amazon Nova Pro, Cohere Aya Expanse, BigCode StarCoder2), and small open-weight (Qwen 7B/14B, Qwen3 small, Llama 3.x small, Phi-3/4, Gemma 2/3, Mistral Nemo, Ministral, GLM-4 9B, Granite, Nemotron, Yi-Coder, Reka). Each entry ships only the fields that meaningfully differ from safe defaults — typically `context_window`, `max_tokens`, and `native_tool_calling: 'reliable'` for frontier-cloud. Adding a new model family is a one-line JSON PR with no TypeScript review required. Values are conservative when uncertain — never claim more than the model actually supports.
+
+- **`model_overrides` config field** — Top-level optional field in `~/.copair/config.yaml`. Deep-partial entries deep-merge over base capabilities; users override any field per-model. Keys normalized at config-load via `normalizeModelId` so the same SKU on different hosts resolves correctly without separate entries. See `docs/model-capabilities.md` for full syntax + examples.
+
+- **`--explain-model <id>` CLI flag** — Resolves capabilities for any model ID and prints the trace (or `--json` for a single-line ResolvedCapabilities-shape JSON). Short-circuits before agent-loop init; no provider auth needed; loads config so user overrides are reflected. Output annotates the *source* of each field (`classifier`, `family-prefix`, `shipped-data`, `override`) so users can debug "why did copair pick X for my model?" without grepping source.
+
+- **`docs/model-capabilities.md` user guide** — Covers how `getCapabilities` resolves values (5-layer table), when to write `model_overrides`, override syntax with examples, honest cross-host vs cross-SKU limitations, `tier_overrides` backwards-compat, the shipped data file with "this is not a comprehensive registry" framing, schema-evolution contract.
+
+### Changed
+
+- **`resolveFormatter` consumes `getCapabilities`** — `src/core/formats/index.ts` no longer substring-matches `modelId.includes('qwen')` etc. The family-prefix routing lives in `resolvePreferredFormat` inside the capabilities module — one source of truth. `'native'` (frontier cloud) falls back to `fenced-block` inside the text-extraction path (native tool calling goes through provider SDKs, not text formatters).
+
+- **`SmallModelHarness` reads from `getCapabilities`** — `src/core/small-model-harness.ts` constructor now consults the capabilities lookup for `enable_small_model_harness` and other harness flags. The spec 028 `tier_overrides` config path is preserved as a backwards-compat fast-path for callers that don't route through the config loader (e.g. unit tests). Production paths route through `loadConfig` which folds `tier_overrides` into `model_overrides` automatically — both paths produce equivalent behavior.
+
+- **`max_tool_calls` resolution chain** — Now a four-layer fallback: `model_overrides[id].recommended_harness.max_tool_calls` → shipped-data tier-derived value (currently always undefined, so fall-through) → `config.small_models.max_tool_calls` (spec 028 global, preserved) → hardcoded 20. Critical: tier-derived default is `undefined` (not `20`) so users who set `config.small_models.max_tool_calls: N` globally keep seeing N apply — setting it to 20 would have silently shadowed the global.
+
+- **Spec 028 F-23 Hermes envelope fallback reframed as always-on resilient parsing** — `src/core/formats/qwen-xml.ts` Hermes envelope fallback was already unconditional in code (good); only the framing changed. JSDoc reframes it as a property of the *format* ("the qwen-xml format permits two output shapes — clean JSON or Hermes envelope; the parser tries JSON first and falls back to the envelope on parse failure"), not a Qwen3-Coder-specific bug. Any model whose output uses qwen-xml format gets the resilient parser. This is the reference pattern for future format-drift work: solve generically, not per-model.
+
+### Architecture
+
+The full implementation was reframed mid-session from "ship a 50-100 entry TypeScript registry with `known_quirks` typed union" to "ship a contract + generic logic + sparse JSON + user escape hatch." The reframe principle now lives as a durable architectural rule:
+
+> Generic protocol-level logic in code; per-model data in JSON config only when genuinely needed; resilient parsers handle drift on the fly; user `model_overrides` is the escape hatch for everything else. **Code never branches on specific model IDs.**
+
+This deliberately limits the registry's growth surface — every per-model patch is a sustainability trap. Adding a model family is one JSON line. Adding a new quirk is reframing it as protocol resilience. Adding a custom fine-tune is a user-config override. The codebase carries zero per-model branches by design.
+
+### Test coverage
+
+- **805/805 tests passing** locally (was 757 pre-spec-029; +48 net).
+- **31-assertion parity test suite** (`tests/core/parity-spec-029.test.ts`) verifies every shipped formatter routing and harness engagement preserved across the subsumption refactor; Qwen3-Coder 480B Hermes regression check (spec 028 F-23) still passes.
+- **6-case E2E tests** for `--explain-model` (`tests/e2e/explain-model.test.ts`) spawn the real built binary and validate output (pretty + JSON shape against ResolvedCapabilities Zod schema, cross-host normalization, missing arg → non-zero exit).
+- **Perf benchmark** (`tests/perf/model-capabilities.bench.ts`) — vitest-bench, local-only (not CI-gated). Target <0.5ms median; actual ~1μs typical (claude-opus-4-7 mean 0.6μs, p99 1.3μs). **~500× faster than budget; no caching needed.**
+
+---
+
 ## [Unreleased] — Workflow Engine Correctness and Documentation (spec 028 Phase C)
 
 ### Fixed

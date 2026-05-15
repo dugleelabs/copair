@@ -24,7 +24,7 @@
 
 import { z } from 'zod';
 import { classifyModel, normalizeModelId, type ModelTier } from './model-tiers.js';
-import shippedData from '../../data/model-capabilities.json' assert { type: 'json' };
+import shippedData from '../../data/model-capabilities.json' with { type: 'json' };
 
 // ── Capability schemas ─────────────────────────────────────────────────────
 

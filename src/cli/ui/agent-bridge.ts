@@ -86,6 +86,10 @@ export interface AgentBridgeEvents {
   'task-complete': (data: { summary: string }) => void;
   'max-turn-warning': (data: { limit: number }) => void;
   'unclear-signal': (data: { message: string }) => void;
+  /** Spec 029 F-13: loop guard nudged the model after 2 identical tool repeats. */
+  'loop-nudge': (data: { message: string }) => void;
+  /** Spec 029 F-13: loop guard halted the agent turn after 3 identical tool repeats. */
+  'loop-halt': (data: { reason: string }) => void;
 }
 
 // ── AgentBridge ─────────────────────────────────────────────────────────────

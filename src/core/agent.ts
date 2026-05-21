@@ -16,6 +16,7 @@ import type { PluginManager } from './plugin-manager.js';
 import type { SmallModelHarness } from './small-model-harness.js';
 import { askUserTool } from '../tools/ask-user.js';
 import { taskCompleteTool } from '../tools/task-complete.js';
+import { LoopGuard } from './loop-guard.js';
 
 export interface AgentOptions {
   systemPrompt?: string;
@@ -42,6 +43,9 @@ export class Agent {
   private textFilter: StreamingMarkupFilter;
   private pluginManager?: PluginManager;
   private harness?: SmallModelHarness;
+  // Spec 029 F-13: detects repeated identical (tool, args, result) tuples and
+  // halts the turn to prevent unbounded token spend. One per Agent instance.
+  private loopGuard: LoopGuard;
 
   constructor(
     provider: Provider,
@@ -62,6 +66,7 @@ export class Agent {
     this.textFilter = buildStreamingFilter(this.formatter);
     this.pluginManager = options.pluginManager;
     this.harness = options.harness;
+    this.loopGuard = new LoopGuard();
   }
 
   get model(): string {
@@ -123,6 +128,11 @@ export class Agent {
     /** Input tokens from the last API call — reflects actual context window usage. */
     lastInputTokens: number;
   }> {
+    // Spec 029 F-13: fresh conversation turn = fresh loop-guard deque so
+    // cross-message state doesn't leak (a deterministic tool returning the
+    // same result across two unrelated user messages shouldn't trip).
+    this.loopGuard.reset();
+
     const reminder = this.harness?.getPerTurnReminder();
     const formatHint = this.harness?.getFormatHint(this.formatter);
     const preamble = [formatHint, reminder].filter(Boolean).join('\n\n');
@@ -445,6 +455,43 @@ export class Agent {
 
         // Gate allowed — show completed with actual execution time
         this.renderer.completeToolExecution(label, result._durationMs ?? 0);
+
+        // Spec 029 F-13: observe the (tool, args, result) tuple. The guard
+        // hashes the raw result string (pre-context-wrapping) so that
+        // wrapping artifacts can't mask a true repeat. On nudge, inject a
+        // [SYSTEM] user-role message that the next iteration will see. On
+        // halt, push a synthetic tool_result and break the outer loop via
+        // the existing `denied` pattern used by the max-tool-calls guard.
+        const guardAction = this.loopGuard.observe(tc.name, toolInput, result.content);
+        if (guardAction.kind === 'halt') {
+          this.renderer.showLoopHalt(guardAction.reason);
+          toolResults.push({
+            type: 'tool_result',
+            toolUseId: tc.id,
+            content: `[SYSTEM] ${guardAction.reason} Returning partial result.`,
+            isError: true,
+          });
+          // Stub out any remaining tool results so the API conversation
+          // stays valid (mirrors the max-tool-calls branch above).
+          const currentIdx = toolCalls.indexOf(tc);
+          for (let i = currentIdx + 1; i < toolCalls.length; i++) {
+            toolResults.push({
+              type: 'tool_result',
+              toolUseId: toolCalls[i].id,
+              content: 'Aborted: loop guard halted the turn.',
+              isError: true,
+            });
+          }
+          denied = true;
+          break;
+        }
+        if (guardAction.kind === 'nudge') {
+          this.renderer.showLoopNudge(guardAction.message);
+          // Inject as a user-role message so the next iteration's provider
+          // call surfaces it to the model. Piggybacks on the existing
+          // conversation mechanism — no new instance state on Agent.
+          this.conversation.appendText('user', `[SYSTEM] ${guardAction.message}`);
+        }
 
         // Show rich output for tool results
         if (!result.isError) {

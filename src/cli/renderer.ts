@@ -491,6 +491,29 @@ export class Renderer {
     this.bridge?.emit('max-turn-warning', { limit });
   }
 
+  /**
+   * Spec 029 F-13: nudge surfaced when the loop guard detects 2 consecutive
+   * identical (tool, args, result) tuples. The matching message is also
+   * injected into the conversation as a [SYSTEM] user-role message so the
+   * next iteration's provider call sees it; this method is the visible
+   * channel for the user / future spec 040 log emission (R-8 hook).
+   */
+  showLoopNudge(message: string): void {
+    process.stderr.write(chalk.yellow(`\n  ⚠  Loop guard: ${message}\n`));
+    this.bridge?.emit('loop-nudge', { message });
+  }
+
+  /**
+   * Spec 029 F-13: halt surfaced when the loop guard detects 3 consecutive
+   * identical (tool, args, result) tuples. The agent loop pushes a synthetic
+   * tool_result + breaks via the existing `denied` pattern; this method
+   * makes the halt visible to the user / spec 040 logger (R-8 hook).
+   */
+  showLoopHalt(reason: string): void {
+    process.stderr.write(chalk.red(`\n  ✗  Loop guard halt: ${reason}\n`));
+    this.bridge?.emit('loop-halt', { reason });
+  }
+
   showUnclearSignal(message: string): void {
     process.stderr.write(chalk.yellow(`\n  ⚠  Model uncertainty: ${message}\n`));
     this.bridge?.emit('unclear-signal', { message });

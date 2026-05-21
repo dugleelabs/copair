@@ -77,6 +77,15 @@ export function normalizeModelId(id: string): string {
 
 // Ordered MOST-SPECIFIC FIRST. First match wins. All patterns are written
 // against the post-normalization form (dashes only, no dots).
+//
+// Tier policy (updated 2026-05-18 per spec 029 §17–§18, F-11 + F-12):
+//   - small = "needs the small-model harness" (≤22B as a default proxy)
+//   - large = "harness disengages" (>22B, OR frontier-cloud models known to
+//             handle long task-execution chains without scaffolding)
+//   - Unknown families fall through to UnknownModelError (no silent default).
+//     The generic size-suffix catch-all rules were intentionally deleted in
+//     spec 029 F-12 — guessing by size without knowing the family conflicts
+//     with the strict-unknowns principle.
 const TIER_RULES: TierRule[] = [
   // ── Frontier proprietary ─────────────────────────────────────────
   { pattern: /^claude-/, tier: 'large', family: 'Claude' },
@@ -101,7 +110,8 @@ const TIER_RULES: TierRule[] = [
   { pattern: /^(?:mistral|pixtral)-large/, tier: 'large', family: 'Mistral/Pixtral Large' },
   { pattern: /^magistral-medium/, tier: 'large', family: 'Magistral Medium' },
   { pattern: /^mistral-medium/, tier: 'large', family: 'Mistral Medium' },
-  { pattern: /^mistral-small-[34]/, tier: 'large', family: 'Mistral Small 3+' },
+  // Mistral-Small 3 is 22B — at the ≤22B small boundary (spec 029 F-12)
+  { pattern: /^mistral-small-[34]/, tier: 'small', family: 'Mistral Small 3+' },
   { pattern: /^codestral/, tier: 'large', family: 'Codestral' },
   { pattern: /^mixtral-8x(?:7|22)b/, tier: 'large', family: 'Mixtral' },
   { pattern: /^magistral-small/, tier: 'large', family: 'Magistral Small' },
@@ -133,14 +143,17 @@ const TIER_RULES: TierRule[] = [
   { pattern: /^deepseek-(?:v[34]|r[12])(?!.*-distill)/, tier: 'large', family: 'DeepSeek frontier' },
   { pattern: /^deepseek-(?:chat|reasoner)/, tier: 'large', family: 'DeepSeek API alias' },
   { pattern: /^deepseek-r1.*?-(?:1-5|7|8)b/, tier: 'small', family: 'DeepSeek R1 distill ≤8B' },
-  { pattern: /^deepseek-r1.*?-(?:14|32|70)b/, tier: 'large', family: 'DeepSeek R1 distill ≥14B' },
+  // Split per spec 029 F-12 ≤22B boundary: 14B distill is small, 32/70B large
+  { pattern: /^deepseek-r1.*?-14b/, tier: 'small', family: 'DeepSeek R1 distill 14B' },
+  { pattern: /^deepseek-r1.*?-(?:32|70)b/, tier: 'large', family: 'DeepSeek R1 distill 32B/70B' },
   { pattern: /^deepseek-coder-1-3b/, tier: 'small', family: 'DeepSeek Coder 1.3B' },
 
   // ── Phi (small suffixes first; phi-4 bare = 14B = large) ─────────
   { pattern: /^phi-?3(?:-5)?-(?:mini|small|vision)/, tier: 'small', family: 'Phi-3 small' },
   { pattern: /^phi-?4-(?:mini|multimodal)/, tier: 'small', family: 'Phi-4 small' },
   { pattern: /^phi-?3(?:-5)?-(?:medium|moe)/, tier: 'large', family: 'Phi-3 mid+' },
-  { pattern: /^phi-?4(?:-14b)?\b/, tier: 'large', family: 'Phi-4 14B' },
+  // Phi-4 14B is at the ≤22B small boundary (spec 029 F-12)
+  { pattern: /^phi-?4(?:-14b)?\b/, tier: 'small', family: 'Phi-4 14B' },
 
   // ── Gemma ────────────────────────────────────────────────────────
   { pattern: /^gemma-?[234]-?(?:9|12|26|27|31)b/, tier: 'large', family: 'Gemma 9B+' },
@@ -180,18 +193,21 @@ const TIER_RULES: TierRule[] = [
   { pattern: /^yi-1-5-(?:6|9)b/, tier: 'small', family: 'Yi 1.5 small' },
 
   // ── TII Falcon ───────────────────────────────────────────────────
-  { pattern: /^falcon-?(?:3|h1r|mamba)?-?(?:1|3|7|10)b/, tier: 'small', family: 'Falcon ≤10B' },
+  // Accept multiple variant tags (Falcon3-Mamba-7B etc.) — previously these
+  // fell through to the generic ≤8B catch-all (deleted in spec 029 F-12).
+  {
+    pattern: /^falcon-?(?:3|h1r|mamba|3-mamba|3-h1r)?-?(?:mamba|h1r)?-?(?:1|3|7|10)b/,
+    tier: 'small',
+    family: 'Falcon ≤10B',
+  },
 
   // ── OpenAI open-weights ──────────────────────────────────────────
   { pattern: /^gpt-?oss-?(?:20|120)b/, tier: 'large', family: 'gpt-oss' },
 
-  // ── Generic local-model heuristics (last resort) ─────────────────
-  { pattern: /-(?:0-5|0-6|1|1-5|1-7|3|3-8|4|7|8)b\b/, tier: 'small', family: 'generic ≤8B' },
-  {
-    pattern: /-(?:13|14|22|27|30|32|34|49|65|70|72|80|90|120|180|235|405|480|671)b\b/,
-    tier: 'large',
-    family: 'generic ≥13B',
-  },
+  // Generic size-suffix catch-all rules were deleted in spec 029 F-12 (see
+  // file-header comment). Unknown families now fall through to
+  // UnknownModelError; users must declare unrecognized models in
+  // `model_overrides` (see docs/model-capabilities.md).
 ];
 
 /**

@@ -6,7 +6,7 @@
  *
  * Cases covered:
  *   - Known family (e.g. claude-opus-4-7) prints sensible trace
- *   - Unknown model returns safe-defaults trace
+ *   - Unknown model → UnknownModelError + did-you-mean, exit 1 (spec 029 F-11)
  *   - --json flag emits single-line valid JSON
  *   - Missing argument → exit 1 with helpful stderr
  *   - Cross-host normalization works (Bedrock-prefixed input)
@@ -36,11 +36,11 @@ const ResolvedCapabilitiesSchema = z.object({
   normalizedId: z.string(),
   tier: z.object({
     value: z.enum(['small', 'large']),
-    source: z.enum(['classifier', 'override']),
+    source: z.enum(['classifier', 'shipped-data', 'override']),
   }),
   preferred_format: z.object({
     value: z.enum(['qwen-xml', 'dsml', 'fenced-block', 'native']),
-    source: z.enum(['family-prefix', 'override']),
+    source: z.enum(['family-prefix', 'shipped-data', 'override']),
   }),
   overrideApplied: z.unknown().nullable(),
   finalCapabilities: z.object({
@@ -68,12 +68,15 @@ describe('--explain-model — pretty output', () => {
     expect(stdout).toMatch(/User override applied: none/);
   });
 
-  it('prints safe-defaults trace for an unknown model and exits 0', () => {
-    const { status, stdout } = run(['--explain-model', 'some-totally-fake-model-id']);
-    expect(status).toBe(0);
-    expect(stdout).toMatch(/Tier:\s+large/); // F-24 default
-    expect(stdout).toMatch(/Preferred format:\s+fenced-block/); // family-prefix fallback
-    expect(stdout).toMatch(/User override applied: none/);
+  it('exits 1 with structured UnknownModelError + did-you-mean for an unknown ID (spec 029 F-11)', () => {
+    const { status, stdout, stderr } = run(['--explain-model', 'some-totally-fake-model-id']);
+    expect(status).toBe(1);
+    // No fabricated trace — design §17.4 prohibits printing safe-default-based output.
+    expect(stdout).toBe('');
+    // Structured error on stderr with the model ID and docs link.
+    expect(stderr).toMatch(/Unknown model "some-totally-fake-model-id"/);
+    expect(stderr).toMatch(/model_overrides/);
+    expect(stderr).toMatch(/docs\.copair\.dev\/custom-and-local-models/);
   });
 
   it('handles Bedrock-prefixed model IDs via normalization', () => {
@@ -113,12 +116,14 @@ describe('--explain-model --json', () => {
     }
   });
 
-  it('JSON output preserves the override-source metadata correctly for unknown models', () => {
-    const { stdout } = run(['--explain-model', 'unknown-2099', '--json']);
-    const parsed = ResolvedCapabilitiesSchema.parse(JSON.parse(stdout.trim()));
-    expect(parsed.tier.source).toBe('classifier');
-    expect(parsed.preferred_format.source).toBe('family-prefix');
-    expect(parsed.overrideApplied).toBeNull();
+  it('--json + unknown model still errors out (does NOT emit a fabricated JSON trace)', () => {
+    // Pre-F-11 this returned a safe-default JSON trace. Now it errors with
+    // the structured message on stderr — the --json flag does not relax the
+    // strict-unknowns guard.
+    const { status, stdout, stderr } = run(['--explain-model', 'unknown-2099', '--json']);
+    expect(status).toBe(1);
+    expect(stdout).toBe('');
+    expect(stderr).toMatch(/Unknown model "unknown-2099"/);
   });
 });
 

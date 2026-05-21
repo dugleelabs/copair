@@ -98,6 +98,12 @@ describe('config with openai-compatible provider (no live API)', () => {
           '        max_tokens: 100',
           '        context_window: 4096',
           '        supports_tool_calling: false',
+          // Spec 029 F-11: unknown model aliases (e.g. self-hosted aliases
+          // like "local") must be declared up-front. This mirrors the F-16
+          // custom-and-local-models docs flow.
+          'model_overrides:',
+          '  local:',
+          '    tier: large',
           'permissions:',
           '  mode: auto-approve',
         ].join('\n'),

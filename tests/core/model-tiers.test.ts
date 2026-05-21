@@ -325,9 +325,9 @@ describe('classifyModel — overrides and defaults', () => {
     ).toBe('large');
   });
 
-  it('unknown model IDs default to large (safe — no harness)', () => {
-    expect(classifyModel('totally-unknown-model').tier).toBe('large');
-    expect(classifyModel('my-custom-future-model-2027').tier).toBe('large');
+  it('unknown model IDs return tier: null (spec 029 F-11 strict-unknowns)', () => {
+    expect(classifyModel('totally-unknown-model').tier).toBeNull();
+    expect(classifyModel('my-custom-future-model-2027').tier).toBeNull();
   });
 
   it('result includes family for known models', () => {
@@ -337,9 +337,10 @@ describe('classifyModel — overrides and defaults', () => {
     expect(classifyModel('command-r7b').family).toBe('Command R7B');
   });
 
-  it('result includes family="unknown (default)" for unmatched IDs', () => {
+  it('result includes family="unknown" + matched=null for unmatched IDs', () => {
     const result = classifyModel('totally-unknown-model');
-    expect(result.family).toBe('unknown (default)');
+    expect(result.family).toBe('unknown');
+    expect(result.matched).toBeNull();
   });
 
   it('result includes family="override" when override is used', () => {

@@ -1,11 +1,21 @@
-import { describe, it, expect, vi } from 'vitest';
+import { describe, it, expect, vi, beforeAll, afterAll } from 'vitest';
 import { Agent } from '../../src/core/agent.js';
 import { PluginManager } from '../../src/core/plugin-manager.js';
 import { ToolRegistry } from '../../src/tools/registry.js';
 import { ToolExecutor } from '../../src/core/tool-executor.js';
 import { ApprovalGate } from '../../src/core/approval-gate.js';
+import { setModelOverrides } from '../../src/core/model-capabilities.js';
 import type { Provider, StreamChunk, ProviderOptions, Message, ToolDefinition } from '../../src/providers/interface.js';
 import type { CopairPlugin, PreRequestEvent, PostRequestEvent } from '../../src/plugins/interface.js';
+
+// Spec 029 F-11: unknown model IDs throw UnknownModelError. Declare the test
+// fixture model up-front so Agent construction can resolve its capabilities.
+beforeAll(() => {
+  setModelOverrides({ 'test-model': { tier: 'large' } });
+});
+afterAll(() => {
+  setModelOverrides({});
+});
 
 /** Create a mock provider that streams a simple text response. */
 function makeMockProvider(overrides: Partial<Provider> = {}): Provider {

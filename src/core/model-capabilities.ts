@@ -23,8 +23,20 @@
  */
 
 import { z } from 'zod';
-import { classifyModel, normalizeModelId, type ModelTier } from './model-tiers.js';
+import {
+  classifyModel,
+  normalizeModelId,
+  TIER_RULE_FAMILIES,
+  TIER_RULE_PATTERN_SOURCES,
+  type ModelTier,
+} from './model-tiers.js';
 import shippedData from '../../data/model-capabilities.json' with { type: 'json' };
+
+// STABLE PUBLIC SURFACE — see spec 029 requirements §10 F-16 URL stability requirement.
+// Do not refactor casually; users will hit this URL in error messages, and the
+// page route is coordinated across copair (this constant) and the copair-website
+// page (T-W05). Renaming requires a coordinated rename in both places.
+const DOCS_URL_CUSTOM_MODELS = 'https://docs.copair.dev/custom-and-local-models';
 
 // ── Capability schemas ─────────────────────────────────────────────────────
 
@@ -226,6 +238,139 @@ function lookupShippedData(normalizedId: string): ShippedEntry | null {
   return null;
 }
 
+// ── Strict-unknowns: UnknownModelError + did-you-mean (spec 029 §17, F-11) ─
+
+/**
+ * Thrown by `getCapabilities` when a model ID is not recognized by any
+ * TIER_RULES family rule, has no `model_overrides[normalizedId]` entry, and
+ * has no shipped `data/model-capabilities.json` entry. The error carries the
+ * raw + normalized ID and the top did-you-mean suggestions so the message
+ * is self-sufficient for the user to act on.
+ *
+ * NF-08 hygiene (spec 029 requirements §10): the error message contains
+ * ONLY the user-supplied modelId, the normalizedId, the suggestion list,
+ * and `DOCS_URL_CUSTOM_MODELS`. No filesystem paths, no stack traces, no
+ * internal hash values, no `_modelOverrides` contents.
+ */
+export class UnknownModelError extends Error {
+  constructor(
+    readonly modelId: string,
+    readonly normalizedId: string,
+    readonly suggestions: string[],
+  ) {
+    const didYouMean =
+      suggestions.length > 0
+        ? `Did you mean:\n${suggestions.map((s) => `  - ${s}`).join('\n')}\n\n`
+        : '';
+    super(
+      `Unknown model "${modelId}" (normalized: "${normalizedId}"). ` +
+        `Add it to model_overrides in your config with at least \`tier: small | large\`. ` +
+        `See: ${DOCS_URL_CUSTOM_MODELS}\n\n` +
+        didYouMean +
+        `Or check the shipped registry: data/model-capabilities.json`,
+    );
+    this.name = 'UnknownModelError';
+  }
+}
+
+/**
+ * Levenshtein edit distance via a small DP table. Pure JS, no library —
+ * runs only on the `UnknownModelError` path so cost is irrelevant on the
+ * happy path. ~20 LOC per spec 029 design §17.3.
+ */
+function levenshtein(a: string, b: string): number {
+  if (a === b) return 0;
+  if (a.length === 0) return b.length;
+  if (b.length === 0) return a.length;
+  let prev = new Array(b.length + 1);
+  let curr = new Array(b.length + 1);
+  for (let j = 0; j <= b.length; j++) prev[j] = j;
+  for (let i = 1; i <= a.length; i++) {
+    curr[0] = i;
+    for (let j = 1; j <= b.length; j++) {
+      const cost = a.charCodeAt(i - 1) === b.charCodeAt(j - 1) ? 0 : 1;
+      curr[j] = Math.min(
+        curr[j - 1] + 1, // insertion
+        prev[j] + 1, // deletion
+        prev[j - 1] + cost, // substitution
+      );
+    }
+    [prev, curr] = [curr, prev];
+  }
+  return prev[b.length];
+}
+
+/**
+ * Extract user-typeable model-ID stems from a regex pattern source. Handles
+ * the common shapes we use in TIER_RULES / shipped JSON:
+ *   - `^claude-opus`            → ['claude-opus']
+ *   - `^claude-(?:sonnet|haiku)` → ['claude-sonnet', 'claude-haiku']
+ *   - `^gpt-(?:3-5|4|5)`        → ['gpt-3-5', 'gpt-4', 'gpt-5']
+ * For patterns with more exotic regex meta (lookahead, character classes),
+ * falls back to the literal prefix up to the first meta character. The goal
+ * is "good enough" did-you-mean coverage, not exhaustive expansion.
+ */
+function extractPatternStems(source: string): string[] {
+  const body = source.replace(/^\^/, '').replace(/\$$/, '');
+  // Match: literal-prefix + optional (?:a|b|c) alternation + literal-suffix.
+  // Each segment must be free of regex meta beyond simple-character runs.
+  const altRe = /^([a-z0-9-]*)\(\?:([a-z0-9|-]+)\)([a-z0-9-]*)/i;
+  const m = body.match(altRe);
+  if (m) {
+    const [, prefix, alts, suffix] = m;
+    return alts.split('|').map((a) => (prefix + a + suffix).toLowerCase());
+  }
+  // No alternation we can expand — take the literal-only prefix
+  const literal = body.match(/^[a-z0-9-]+/i);
+  return literal ? [literal[0].toLowerCase()] : [];
+}
+
+/**
+ * Return up to 3 closest-matching candidate model IDs to `normalized` by
+ * Levenshtein distance. Threshold: distance ≤ max(3, len(query) × 0.4) — a
+ * small absolute floor for short queries, scaled fraction for long ones.
+ * Per spec 029 design §17.3 + requirements NF-05.
+ *
+ * Candidate set: shipped JSON pattern stems (e.g. `claude-opus`,
+ * `claude-sonnet`) ∪ shipped family labels ∪ currently-loaded
+ * `_modelOverrides` keys ∪ TIER_RULES family names ∪ TIER_RULES pattern
+ * stems. Dedup before scoring; slice top 3 ascending.
+ *
+ * Returns `[]` for gibberish IDs that aren't near anything — the empty list
+ * triggers the no-suggestion branch in `UnknownModelError`.
+ */
+export function suggestDidYouMean(normalized: string): string[] {
+  const candidates: string[] = [
+    ...SHIPPED_ENTRIES.flatMap((e) => extractPatternStems(e.pattern.source)),
+    ...SHIPPED_ENTRIES.map((e) => e.family.toLowerCase()),
+    ...Object.keys(_modelOverrides),
+    ...TIER_RULE_FAMILIES,
+    ...TIER_RULE_PATTERN_STEMS,
+  ];
+  const seen = new Set<string>();
+  const scored: Array<{ c: string; d: number }> = [];
+  const queryThreshold = Math.max(3, Math.floor(normalized.length * 0.4));
+  for (const c of candidates) {
+    if (!c) continue;
+    if (seen.has(c)) continue;
+    seen.add(c);
+    const d = levenshtein(normalized, c);
+    if (d <= queryThreshold) scored.push({ c, d });
+  }
+  scored.sort((a, b) => a.d - b.d);
+  return scored.slice(0, 3).map((s) => s.c);
+}
+
+/**
+ * Module-load-time-computed list of TIER_RULES pattern stems, expanded once
+ * per import. Used by `suggestDidYouMean` to give the candidate pool real
+ * model-ID-shaped strings (e.g. `claude`, `qwen3-coder-480b`) rather than
+ * just family labels.
+ */
+const TIER_RULE_PATTERN_STEMS: string[] = TIER_RULE_PATTERN_SOURCES.flatMap(
+  extractPatternStems,
+);
+
 // ── Config access ──────────────────────────────────────────────────────────
 
 /**
@@ -255,28 +400,41 @@ export function _getModelOverridesForTests(): Record<string, ModelOverride> {
  *
  * Pipeline:
  *   1. Normalize via spec 028 `normalizeModelId`
- *   2. Derive `tier` via spec 028 `classifyModel` (single source of truth)
- *   3. Derive `preferred_format` via `resolvePreferredFormat` (family-prefix)
- *   4. Derive `recommended_harness` via `resolveHarnessDefaults(tier)`
- *   5. Fill `context_window` / `native_tool_calling` from `SAFE_DEFAULTS`
- *   6. Deep-merge any user `model_overrides[normalizedId]` on top
+ *   2. Classify via spec 028 `classifyModel` — may yield `tier: null` (unknown)
+ *   3. **Strict-unknowns guard (spec 029 §17, F-11)**: if the classifier
+ *      returned `tier: null` AND there is no `model_overrides` entry AND no
+ *      shipped-data entry for this ID, throw `UnknownModelError`. Otherwise
+ *      derive the effective tier from override / shipped-data / classifier
+ *      (in that precedence order).
+ *   4. Derive `preferred_format` via `resolvePreferredFormat` (family-prefix)
+ *   5. Derive `recommended_harness` via `resolveHarnessDefaults(tier)`
+ *   6. Fill `context_window` / `native_tool_calling` from `SAFE_DEFAULTS`
+ *   7. Layer shipped JSON entry, then user `model_overrides[normalizedId]`,
+ *      on top via `deepMerge`.
  *
- * Never throws. Empty / null / undefined `modelId` resolves to safe defaults
- * (`tier: 'large'` from F-24's unknown-default; `preferred_format: 'fenced-block'`).
+ * @throws {UnknownModelError} when the ID matches no family rule and the user
+ *   has not declared it via overrides / shipped data.
  */
 export function getCapabilities(modelId: string | null | undefined): ModelCapabilities {
   const id = modelId ?? '';
   const normalized = normalizeModelId(id);
-  const { tier: derivedTier } = classifyModel(id);
+  const classification = classifyModel(id);
   const override = _modelOverrides[normalized];
+  const shipped = lookupShippedData(normalized);
 
-  // Effective tier — user override (when set) takes precedence over classifier.
-  // The harness defaults are then derived from the effective tier, so a user
-  // flipping `tier` also flips `enable_small_model_harness` etc. This matches
-  // spec 028 `tier_overrides` semantics (flipping tier flipped harness too).
-  // Fine-grained per-field overrides (e.g. override only `max_turns`) still
-  // work — they get layered on top via deepMerge.
-  const effectiveTier = override?.tier ?? derivedTier;
+  // Strict-unknowns: refuse silently-defaulting to `large` for IDs we don't
+  // recognize. The user must declare unknown models in `model_overrides` (or
+  // the ID must be covered by shipped JSON data).
+  if (classification.tier === null && !override && !shipped) {
+    throw new UnknownModelError(id, normalized, suggestDidYouMean(normalized));
+  }
+
+  // Effective tier — override > shipped > classifier. The classifier tier may
+  // be null here (when shipped or override is providing the value), so we
+  // fall back to 'large' as the absolute floor; downstream resolution then
+  // re-merges shipped/override on top so the user-declared value wins anyway.
+  const effectiveTier: ModelTier =
+    override?.tier ?? shipped?.capabilities.tier ?? classification.tier ?? 'large';
 
   let base: ModelCapabilities = {
     tier: effectiveTier,
@@ -287,11 +445,6 @@ export function getCapabilities(modelId: string | null | undefined): ModelCapabi
     recommended_harness: resolveHarnessDefaults(effectiveTier),
   };
 
-  // Layer shipped sparse data (data/model-capabilities.json) on top of base.
-  // This is "almost every model we can reasonably cover" data — context windows,
-  // native_tool_calling reliability for frontier models, etc. Pure data, no
-  // code branches. User `model_overrides` still wins below.
-  const shipped = lookupShippedData(normalized);
   if (shipped) {
     base = deepMerge(base, shipped.capabilities);
   }
@@ -304,7 +457,7 @@ export function getCapabilities(modelId: string | null | undefined): ModelCapabi
 export interface ResolvedCapabilities {
   modelId: string;
   normalizedId: string;
-  tier: { value: ModelTier; source: 'classifier' | 'override' };
+  tier: { value: ModelTier; source: 'classifier' | 'shipped-data' | 'override' };
   preferred_format: {
     value: ModelCapabilities['preferred_format'];
     source: 'family-prefix' | 'shipped-data' | 'override';
@@ -321,17 +474,30 @@ export interface ResolvedCapabilities {
  * Return the full resolution trace for a model ID. Used by `--explain-model`
  * CLI flag to surface where each value came from. Read-only; no warning side
  * effects.
+ *
+ * @throws {UnknownModelError} when the ID matches no family rule and has no
+ *   user override / shipped-data entry — same strict-unknowns contract as
+ *   `getCapabilities`. The CLI wrapper catches and prints to stderr; do NOT
+ *   fabricate a trace from safe-defaults (spec 029 design §17.4).
  */
 export function explainCapabilities(modelId: string): ResolvedCapabilities {
   const id = modelId ?? '';
   const normalized = normalizeModelId(id);
-  const { tier: derivedTier } = classifyModel(id);
+  const classification = classifyModel(id);
   const derivedFormat = resolvePreferredFormat(normalized);
   const override = _modelOverrides[normalized] ?? null;
   const shipped = lookupShippedData(normalized);
 
-  // Effective tier — see comment in getCapabilities for rationale
-  const effectiveTier = override?.tier ?? derivedTier;
+  // Strict-unknowns: same guard as getCapabilities so `--explain-model
+  // <unknown>` cleanly errors out instead of fabricating a trace from
+  // safe-defaults.
+  if (classification.tier === null && !override && !shipped) {
+    throw new UnknownModelError(id, normalized, suggestDidYouMean(normalized));
+  }
+
+  // Effective tier — override > shipped > classifier > 'large' floor.
+  const effectiveTier: ModelTier =
+    override?.tier ?? shipped?.capabilities.tier ?? classification.tier ?? 'large';
 
   let base: ModelCapabilities = {
     tier: effectiveTier,
@@ -352,12 +518,20 @@ export function explainCapabilities(modelId: string): ResolvedCapabilities {
   if (override?.preferred_format !== undefined) formatSource = 'override';
   else if (shipped?.capabilities.preferred_format !== undefined) formatSource = 'shipped-data';
 
+  // tier source resolution (most-specific-first): override > shipped-data >
+  // classifier. Aligned with the effectiveTier fallback chain above.
+  let tierSource: 'classifier' | 'shipped-data' | 'override' = 'classifier';
+  if (override?.tier !== undefined) tierSource = 'override';
+  else if (classification.tier === null && shipped?.capabilities.tier !== undefined) {
+    tierSource = 'shipped-data';
+  }
+
   return {
     modelId: id,
     normalizedId: normalized,
     tier: {
       value: final.tier,
-      source: override?.tier !== undefined ? 'override' : 'classifier',
+      source: tierSource,
     },
     preferred_format: {
       value: final.preferred_format,

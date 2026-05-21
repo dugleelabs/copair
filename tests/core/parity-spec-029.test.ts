@@ -48,9 +48,11 @@ describe('Spec 029 parity — formatter selection (T-B01)', () => {
     ['claude-opus-4-7', FencedBlockFormatter],
     ['gpt-5', FencedBlockFormatter],
     ['gemini-2-5-pro', FencedBlockFormatter],
-    // Unknown / generic → fenced-block fallback
+    // Known generic local family → fenced-block fallback
     ['llama-3-8b', FencedBlockFormatter],
-    ['some-completely-unknown-model', FencedBlockFormatter],
+    // Spec 029 F-11: unknown model IDs no longer silently fall back —
+    // resolveFormatter must throw via getCapabilities. Asserted separately
+    // below; removed from the happy-path table.
   ];
 
   for (const [modelId, ExpectedFormatter] of cases) {
@@ -59,6 +61,12 @@ describe('Spec 029 parity — formatter selection (T-B01)', () => {
       expect(f).toBeInstanceOf(ExpectedFormatter);
     });
   }
+
+  it('unknown model ID → throws UnknownModelError (spec 029 F-11)', () => {
+    expect(() => resolveFormatter('any-provider', 'some-completely-unknown-model')).toThrow(
+      /Unknown model "some-completely-unknown-model"/,
+    );
+  });
 
   it('explicit override still wins over family-prefix routing', () => {
     const f = resolveFormatter('any-provider', 'deepseek-v3', 'fenced-block');
@@ -165,13 +173,13 @@ describe('Spec 029 parity — Hermes envelope regression (T-B02; spec 028 F-23)'
 });
 
 describe('Spec 029 parity — capabilities derivation is purely generic', () => {
-  it('no per-model code branches: capabilities for unknown model = safe defaults', () => {
-    // A model copair has never heard of must resolve cleanly via generic logic
-    const c = getCapabilities('totally-new-model-no-one-has-seen-2099');
-    expect(c.tier).toBe('large'); // F-24's safe default for unknown
-    expect(c.preferred_format).toBe('fenced-block'); // family-prefix fallback
-    expect(c.context_window).toBe(32_768); // SAFE_DEFAULTS — no shipped entry matched
-    expect(c.recommended_harness.enable_small_model_harness).toBe(false);
+  it('no per-model code branches: capabilities for unknown model throws UnknownModelError (F-11)', () => {
+    // Spec 029 F-11 flipped this: copair no longer silently defaults unknown
+    // models to safe-large. Callers must declare unknown IDs via
+    // model_overrides (asserted below) or via shipped JSON registry.
+    expect(() => getCapabilities('totally-new-model-no-one-has-seen-2099')).toThrow(
+      /Unknown model "totally-new-model-no-one-has-seen-2099"/,
+    );
   });
 
   it('user override fully replaces tier classification when set', () => {
@@ -198,8 +206,19 @@ describe('Spec 029 — shipped sparse JSON data (data/model-capabilities.json)',
     expect(getCapabilities('gpt-5-mini').max_tokens).toBe(4_096);
   });
 
-  it('Unknown models get 4096 max_tokens safe default', () => {
-    expect(getCapabilities('unknown-2099').max_tokens).toBe(4_096);
+  it('Unknown models with no override / shipped entry throw (spec 029 F-11)', () => {
+    // Pre-F-11 this returned 4096 max_tokens via silent-large default.
+    // Now it errors so the user is forced to declare the model in
+    // model_overrides — preventing accidental "guessing" about behavior.
+    expect(() => getCapabilities('unknown-2099')).toThrow(/Unknown model "unknown-2099"/);
+  });
+
+  it('Unknown model declared via model_overrides resolves with SAFE_DEFAULTS', () => {
+    setModelOverrides({ 'unknown-2099': { tier: 'large' } });
+    const c = getCapabilities('unknown-2099');
+    expect(c.tier).toBe('large');
+    expect(c.max_tokens).toBe(4_096); // SAFE_DEFAULTS — no shipped entry hit
+    expect(c.context_window).toBe(32_768);
   });
 
   it('User override of max_tokens wins over shipped data', () => {
@@ -238,9 +257,25 @@ describe('Spec 029 — shipped sparse JSON data (data/model-capabilities.json)',
     expect(ex.finalCapabilities.context_window).toBe(200_000);
   });
 
-  it('explainCapabilities reports null shippedDataMatch for unknown models', () => {
-    const ex = explainCapabilities('something-nobody-knows-2099');
+  it('explainCapabilities throws UnknownModelError for unknown models (spec 029 F-11)', () => {
+    // The CLI wrapper (src/cli/explain-model.ts via bootstrap.ts) catches this
+    // and exits 1 — explainCapabilities itself does NOT fabricate a trace from
+    // safe-defaults (design §17.4).
+    expect(() => explainCapabilities('something-nobody-knows-2099')).toThrow(
+      /Unknown model "something-nobody-knows-2099"/,
+    );
+  });
+
+  it('explainCapabilities reports null shippedDataMatch for known-family-no-shipped-entry', () => {
+    // Sanity check that the null-shippedDataMatch path still works for known
+    // models that simply lack a shipped JSON entry. falcon-3-7b matches the
+    // Falcon TIER_RULES entry (tier: small) but has no shipped JSON row.
+    setModelOverrides({});
+    const ex = explainCapabilities('falcon-3-7b');
     expect(ex.shippedDataMatch).toBeNull();
+    // SAFE_DEFAULTS for context_window since no shipped entry covers this.
     expect(ex.finalCapabilities.context_window).toBe(32_768);
+    expect(ex.tier.value).toBe('small');
+    expect(ex.tier.source).toBe('classifier');
   });
 });

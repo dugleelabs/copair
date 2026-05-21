@@ -11,19 +11,29 @@
  * `qwen/qwen3-coder-480b`, Ollama `qwen3-coder:480b`, Together `Qwen/...`).
  * `normalizeModelId()` collapses these into one form before regex matching.
  *
- * Default for unmatched IDs is `large` — the safer choice, since the harness
- * is invasive and unknown frontier models shouldn't be crippled by it.
+ * Spec 029 F-11 (strict unknowns) reshapes the result: an unmatched ID returns
+ * `{ tier: null, family: 'unknown', matched: null }` instead of defaulting to
+ * `large`. `classifyModel` itself remains infallible — callers decide what to
+ * do with the null sentinel. `getCapabilities` enforces strictness by throwing
+ * `UnknownModelError` unless the user supplied a `model_overrides` entry or a
+ * shipped-data row claims the ID.
  */
 
 export type ModelTier = 'small' | 'large';
 
-export interface ClassificationResult {
-  tier: ModelTier;
-  /** Human-readable family name (for telemetry / debugging). */
-  family?: string;
-  /** The regex source that matched (for /audit). */
-  matched?: string;
-}
+/**
+ * Result of classifying a model ID. Discriminated union: a successful match
+ * carries a non-null `tier`, `family`, and `matched` regex source. An
+ * unmatched ID carries `tier: null`, `family: 'unknown'`, `matched: null`.
+ *
+ * ⚠ Breaking type change (spec 029 F-11, 2026-05-18). Previously `tier` was
+ * always `'small' | 'large'` (large was the unknown default). External
+ * callers that destructure `tier` as non-null break at compile time. No
+ * external callers known today; flagged in spec 029 CHANGELOG.
+ */
+export type ClassificationResult =
+  | { tier: ModelTier; family: string; matched: string }
+  | { tier: null; family: 'unknown'; matched: null };
 
 interface TierRule {
   pattern: RegExp;
@@ -185,25 +195,61 @@ const TIER_RULES: TierRule[] = [
 ];
 
 /**
+ * Lowercased, deduped list of family names from TIER_RULES. Used by spec 029
+ * F-11's did-you-mean candidate set (see `suggestDidYouMean` in
+ * model-capabilities.ts). Excludes the generic-size catch-all rules whose
+ * family labels are not meaningful suggestions for users.
+ */
+export const TIER_RULE_FAMILIES: string[] = (() => {
+  const seen = new Set<string>();
+  for (const rule of TIER_RULES) {
+    if (!rule.family) continue;
+    if (rule.family.startsWith('generic')) continue;
+    seen.add(rule.family.toLowerCase());
+  }
+  return [...seen];
+})();
+
+/**
+ * Raw regex pattern sources from TIER_RULES, excluding generic-size
+ * catch-all rules. Consumed by spec 029 F-11's `suggestDidYouMean` which
+ * expands each into typeable model-ID stems for did-you-mean suggestions.
+ */
+export const TIER_RULE_PATTERN_SOURCES: string[] = (() => {
+  return TIER_RULES.filter((r) => !r.family?.startsWith('generic')).map(
+    (r) => r.pattern.source,
+  );
+})();
+
+/**
  * Classify a model ID into a tier (small or large).
  *
  * Resolution order:
  *   1. Per-model override from config (`tier_overrides[modelId]`)
  *   2. Built-in rule list against the normalized model ID
- *   3. Default `large` (safe — no harness for unknowns)
+ *   3. Sentinel `{ tier: null, family: 'unknown', matched: null }` — callers
+ *      (notably `getCapabilities` per spec 029 F-11) decide whether to error
+ *      or fall through to user-supplied overrides / shipped data.
+ *
+ * Stays infallible by design: non-CLI callers (tests, telemetry) depend on
+ * being able to ask the classifier about any string without try/catch.
  */
 export function classifyModel(
   modelId: string,
   overrides?: Record<string, ModelTier>,
 ): ClassificationResult {
   if (overrides?.[modelId]) {
-    return { tier: overrides[modelId], family: 'override' };
+    return { tier: overrides[modelId], family: 'override', matched: 'override' };
   }
   const normalized = normalizeModelId(modelId);
   for (const rule of TIER_RULES) {
     if (rule.pattern.test(normalized)) {
-      return { tier: rule.tier, family: rule.family, matched: rule.pattern.source };
+      return {
+        tier: rule.tier,
+        family: rule.family ?? 'unknown',
+        matched: rule.pattern.source,
+      };
     }
   }
-  return { tier: 'large', family: 'unknown (default)' };
+  return { tier: null, family: 'unknown', matched: null };
 }

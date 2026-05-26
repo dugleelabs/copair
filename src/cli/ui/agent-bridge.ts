@@ -90,6 +90,10 @@ export interface AgentBridgeEvents {
   'loop-nudge': (data: { message: string }) => void;
   /** Spec 029 F-13: loop guard halted the agent turn after 3 identical tool repeats. */
   'loop-halt': (data: { reason: string }) => void;
+  /** Spec 029 F-14: format-repair retry fired after a parseStrict failure. */
+  'format-repair': (data: { specific_issue: string }) => void;
+  /** Spec 029 F-14: format-repair retries exhausted; agent turn breaks. */
+  'format-repair-exhausted': (data: { specific_issue: string; message: string }) => void;
 }
 
 // ── AgentBridge ─────────────────────────────────────────────────────────────

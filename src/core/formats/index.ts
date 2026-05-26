@@ -1,4 +1,5 @@
-export type { ToolCallFormatter, ParsedToolCall } from './interface.js';
+export type { ToolCallFormatter, ParsedToolCall, ParseError, ParseResult } from './interface.js';
+export { parseWithStrictFallback } from './interface.js';
 export { FencedBlockFormatter, tryParseToolCall } from './fenced-block.js';
 export { DsmlFormatter } from './dsml.js';
 export { QwenXmlFormatter } from './qwen-xml.js';

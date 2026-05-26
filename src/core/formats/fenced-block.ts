@@ -1,5 +1,5 @@
 import type { ToolDefinition } from '../../providers/interface.js';
-import type { ToolCallFormatter, ParsedToolCall } from './interface.js';
+import type { ToolCallFormatter, ParsedToolCall, ParseError, ParseResult } from './interface.js';
 
 /**
  * Attempt to parse a JSON string as a tool call.
@@ -49,6 +49,63 @@ const FENCED_BLOCK_PATTERN = /```(?:tool_call|json)?\s*\n([\s\S]*?)```/g;
 /** Matches any fenced code block (for text filtering). */
 const MARKUP_PATTERN = /```(?:tool_call|json)?\s*\n[\s\S]*?```/g;
 
+function clipFence(text: string, pos: number, span = 200): string {
+  if (pos < 0) return text.slice(0, span);
+  const start = Math.max(0, pos - Math.floor(span / 2));
+  return text.slice(start, start + span);
+}
+
+function diagnoseFencedBody(body: string, example: string): ParseError {
+  const offending = clipFence(body, 0);
+  let parsed: unknown;
+  try {
+    parsed = JSON.parse(body.trim());
+  } catch (err) {
+    return {
+      kind: 'parse',
+      message: `fenced block body is not valid JSON: ${err instanceof Error ? err.message : String(err)}`,
+      expected_format_example: example,
+      offending_substring: offending,
+      specific_issue: 'invalid_json',
+    };
+  }
+  if (parsed === null || typeof parsed !== 'object') {
+    return {
+      kind: 'parse',
+      message: 'fenced block body parsed as JSON but is not an object',
+      expected_format_example: example,
+      offending_substring: offending,
+      specific_issue: 'bad_arg_type',
+    };
+  }
+  const obj = parsed as Record<string, unknown>;
+  if (typeof obj.name !== 'string' || obj.name.length === 0) {
+    return {
+      kind: 'parse',
+      message: 'fenced block body is missing the required "name" field',
+      expected_format_example: example,
+      offending_substring: offending,
+      specific_issue: 'unknown_tool',
+    };
+  }
+  if (obj.arguments !== undefined && (typeof obj.arguments !== 'object' || obj.arguments === null)) {
+    return {
+      kind: 'parse',
+      message: '"arguments" must be an object',
+      expected_format_example: example,
+      offending_substring: offending,
+      specific_issue: 'bad_arg_type',
+    };
+  }
+  return {
+    kind: 'parse',
+    message: 'fenced block body did not match any supported shape',
+    expected_format_example: example,
+    offending_substring: offending,
+    specific_issue: 'other',
+  };
+}
+
 export class FencedBlockFormatter implements ToolCallFormatter {
   readonly name = 'fenced-block';
   readonly markupPattern = MARKUP_PATTERN;
@@ -72,6 +129,58 @@ export class FencedBlockFormatter implements ToolCallFormatter {
 
   exampleCall(): string {
     return '```tool_call\n{"name": "read", "arguments": {"file_path": "/path/to/file"}}\n```';
+  }
+
+  /**
+   * Spec 029 F-14: non-throwing parse with structured per-failure-mode errors.
+   * Plain text without ``` fences returns `{ ok: true, toolCalls: [] }`. A
+   * fence that doesn't match the closed-fence regex is reported as
+   * `unclosed_tag`.
+   */
+  parseStrict(text: string): ParseResult {
+    if (!text.includes('```')) {
+      return { ok: true, toolCalls: [], remainingText: text };
+    }
+
+    const toolCalls: ParsedToolCall[] = [];
+    let remainingText = text;
+    let lastError: ParseError | null = null;
+
+    const regex = new RegExp(FENCED_BLOCK_PATTERN.source, 'g');
+    let match: RegExpExecArray | null;
+    while ((match = regex.exec(text)) !== null) {
+      const body = match[1];
+      const tc = tryParseToolCall(body);
+      if (tc) {
+        toolCalls.push(tc);
+        remainingText = remainingText.replace(match[0], '');
+        continue;
+      }
+      lastError = diagnoseFencedBody(body, this.exampleCall());
+    }
+
+    if (toolCalls.length === 0 && lastError === null) {
+      // ``` present but no closed fence matched — model likely emitted an
+      // unclosed fence.
+      const fenceCount = (text.match(/```/g) ?? []).length;
+      if (fenceCount % 2 === 1) {
+        lastError = {
+          kind: 'parse',
+          message: 'fenced block was opened with ``` but never closed',
+          expected_format_example: this.exampleCall(),
+          offending_substring: clipFence(text, text.indexOf('```')),
+          specific_issue: 'unclosed_tag',
+        };
+      }
+    }
+
+    if (toolCalls.length > 0) {
+      return { ok: true, toolCalls, remainingText: remainingText.trim() };
+    }
+    if (lastError) {
+      return { ok: false, error: lastError };
+    }
+    return { ok: true, toolCalls: [], remainingText: text };
   }
 
   buildSystemPrompt(tools: ToolDefinition[]): string {

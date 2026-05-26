@@ -1,4 +1,4 @@
-import type { Provider, ContentBlock } from '../providers/interface.js';
+import type { Provider, ContentBlock, Message, ToolDefinition, StreamChunk } from '../providers/interface.js';
 import { NATIVE_SEARCH_MARKER } from '../providers/interface.js';
 import type { ToolRegistry } from '../tools/registry.js';
 import type { ToolExecutor } from './tool-executor.js';
@@ -8,9 +8,10 @@ import { Renderer, formatToolCallFromInput } from '../cli/renderer.js';
 import { logger } from './logger.js';
 import { INJECTION_PREAMBLE, wrapFile, wrapToolResult } from './context-wrapper.js';
 
-import type { ToolCallFormatter } from './formats/interface.js';
+import type { ToolCallFormatter, ParsedToolCall } from './formats/interface.js';
 import type { FormatName } from './formats/index.js';
-import { resolveFormatter, buildStreamingFilter, StreamingMarkupFilter } from './formats/index.js';
+import { resolveFormatter, buildStreamingFilter, StreamingMarkupFilter, parseWithStrictFallback } from './formats/index.js';
+import { buildRepairMessage, MAX_REPAIR_RETRIES } from './formats/repair.js';
 import type { AgentBridge } from '../cli/ui/agent-bridge.js';
 import type { PluginManager } from './plugin-manager.js';
 import type { SmallModelHarness } from './small-model-harness.js';
@@ -152,15 +153,12 @@ export class Agent {
     let toolCallCount = 0;
     const maxToolCalls = this.harness?.isSmallModel ? (this.harness.maxToolCalls) : Infinity;
 
-    // Agent loop — keep calling provider until no more tool calls
+    // Agent loop — keep calling provider until no more tool calls.
+    // F-25: the streaming filter is reset inside `streamOnce` so
+    // `suppressAfterMatch` (qwen-xml, dsml) scopes to one model response —
+    // both the outer iteration AND the inner F-14 repair-retry stream get a
+    // fresh filter.
     while (true) {
-      // F-25: Reset streaming filter state at the top of each iteration so
-      // `suppressAfterMatch` (qwen-xml, dsml) scopes to one model response,
-      // not the full session. Otherwise the first `<tool_call>` block in any
-      // turn flips `matchSeen = true` permanently, discarding all subsequent
-      // text — including the final-turn analysis answer.
-      this.textFilter.reset();
-
       const messages = await this.contextWindow.checkAndTruncate(
         this.conversation.getHistory(),
         this.provider,
@@ -236,49 +234,12 @@ export class Agent {
         });
       }
 
-      const stream = activeProvider.chat(activeMessages, activeTools, {
-        model: this._model,
-        stream: true,
-        systemPrompt: activeSystemPrompt,
-        maxTokens: this.options.maxTokens,
-        temperature: this.options.temperature,
-      });
-
-      const { toolCalls: nativeToolCalls, usage, fullText } = await this.renderer.render(
-        stream,
-        this.textFilter,
+      let { fullText, nativeToolCalls, usage } = await this.streamOnce(
+        activeProvider,
+        activeMessages,
+        activeTools,
+        activeSystemPrompt,
       );
-
-      // Parse tool invocations from text output using the resolved formatter.
-      // Some providers (e.g. DeepSeek) leak their native markup (DSML) into
-      // text content even when using the OpenAI-compatible tool calling API.
-      // We check for leaked tool calls in text whenever text is present,
-      // merging them with any native tool calls from the same response.
-      // Strip native search markers — they are display-only; the provider already
-      // handled the search server-side within this same streaming response.
-      // The model's answer (incorporating search results) is in fullText.
-      const nonNativeToolCalls = nativeToolCalls.filter(
-        (tc) => tc.name !== NATIVE_SEARCH_MARKER,
-      );
-
-      let toolCalls = nonNativeToolCalls;
-      let cleanedText = fullText;
-      if (fullText) {
-        const parsed = this.formatter.parse(fullText);
-        if (parsed.toolCalls.length > 0) {
-          // Deduplicate: skip parsed calls whose name+arguments match a native call
-          const nativeKeys = new Set(
-            nonNativeToolCalls.map((tc) => `${tc.name}:${tc.arguments}`),
-          );
-          const uniqueParsed = parsed.toolCalls.filter(
-            (tc) => !nativeKeys.has(`${tc.name}:${tc.arguments}`),
-          );
-          toolCalls = [...nonNativeToolCalls, ...uniqueParsed];
-          cleanedText = parsed.remainingText;
-        }
-      }
-
-
 
       if (usage) {
         lastInputTokens = usage.inputTokens;
@@ -288,6 +249,113 @@ export class Agent {
               outputTokens: totalUsage.outputTokens + usage.outputTokens,
             }
           : { ...usage };
+      }
+
+      // Strip native search markers — they are display-only; the provider already
+      // handled the search server-side within this same streaming response.
+      // The model's answer (incorporating search results) is in fullText.
+      let nonNativeToolCalls = nativeToolCalls.filter(
+        (tc) => tc.name !== NATIVE_SEARCH_MARKER,
+      );
+
+      let toolCalls: ParsedToolCall[] = nonNativeToolCalls;
+      let cleanedText = fullText;
+      let repairExhausted = false;
+      if (fullText) {
+        // Spec 029 F-14: tool-call format-error repair loop. Small models
+        // occasionally emit malformed markup (unclosed tags, invalid JSON,
+        // missing name fields). The repair loop asks the model to retry with
+        // a structured `[SYSTEM]` nudge, capped at MAX_REPAIR_RETRIES per
+        // assistant turn (design §20.3, NF-04 budget).
+        //
+        // Engagement policy: small-tier only. Large models with reliable
+        // native tool calling rarely fail format, so we skip the extra parse
+        // round-trip on their successful turns.
+        if (this.harness?.isSmallModel) {
+          let parseResult = parseWithStrictFallback(this.formatter, fullText);
+          let repairAttempts = 0;
+          while (
+            !parseResult.ok &&
+            nonNativeToolCalls.length === 0 &&
+            repairAttempts < MAX_REPAIR_RETRIES
+          ) {
+            repairAttempts++;
+            this.renderer.showFormatRepair(parseResult.error.specific_issue);
+            // Inject as a user-role [SYSTEM] message, matching the loop-guard
+            // nudge pattern in §19.2 — no new instance state.
+            this.conversation.appendText('user', buildRepairMessage(parseResult.error));
+
+            const reMessages = await this.contextWindow.checkAndTruncate(
+              this.conversation.getHistory(),
+              activeProvider,
+            );
+            const reStream = await this.streamOnce(
+              activeProvider,
+              reMessages,
+              activeTools,
+              activeSystemPrompt,
+            );
+            if (reStream.usage) {
+              lastInputTokens = reStream.usage.inputTokens;
+              totalUsage = totalUsage
+                ? {
+                    inputTokens: totalUsage.inputTokens + reStream.usage.inputTokens,
+                    outputTokens: totalUsage.outputTokens + reStream.usage.outputTokens,
+                  }
+                : { ...reStream.usage };
+            }
+            fullText = reStream.fullText;
+            cleanedText = reStream.fullText;
+            // If the retry produced native tool calls, accept them and exit
+            // the repair loop — the model recovered via the native channel.
+            const retryNative = reStream.nativeToolCalls.filter(
+              (tc) => tc.name !== NATIVE_SEARCH_MARKER,
+            );
+            if (retryNative.length > 0) {
+              nonNativeToolCalls = retryNative;
+              toolCalls = retryNative;
+              parseResult = { ok: true, toolCalls: [], remainingText: reStream.fullText };
+              break;
+            }
+            parseResult = parseWithStrictFallback(this.formatter, fullText);
+          }
+
+          if (!parseResult.ok) {
+            this.renderer.showFormatRepairExhausted(parseResult.error);
+            repairExhausted = true;
+          } else if (parseResult.toolCalls.length > 0) {
+            const nativeKeys = new Set(
+              nonNativeToolCalls.map((tc) => `${tc.name}:${tc.arguments}`),
+            );
+            const uniqueParsed = parseResult.toolCalls.filter(
+              (tc) => !nativeKeys.has(`${tc.name}:${tc.arguments}`),
+            );
+            toolCalls = [...nonNativeToolCalls, ...uniqueParsed];
+            cleanedText = parseResult.remainingText;
+          }
+        } else {
+          // Large-model legacy path — same behavior as before spec 029 F-14.
+          // Some providers (e.g. DeepSeek) leak their native markup (DSML)
+          // into text content even when using the OpenAI-compatible tool
+          // calling API; we still merge any leaked calls with native calls.
+          const parsed = this.formatter.parse(fullText);
+          if (parsed.toolCalls.length > 0) {
+            const nativeKeys = new Set(
+              nonNativeToolCalls.map((tc) => `${tc.name}:${tc.arguments}`),
+            );
+            const uniqueParsed = parsed.toolCalls.filter(
+              (tc) => !nativeKeys.has(`${tc.name}:${tc.arguments}`),
+            );
+            toolCalls = [...nonNativeToolCalls, ...uniqueParsed];
+            cleanedText = parsed.remainingText;
+          }
+        }
+      }
+
+      if (repairExhausted) {
+        // Format-repair retries exhausted — surface to user (already shown
+        // via showFormatRepairExhausted) and break the outer iteration loop.
+        break;
       }
 
       // ── Plugin hook: postRequest (observation only) ──
@@ -545,6 +613,38 @@ export class Agent {
     }
 
     return { usage: totalUsage, lastInputTokens };
+  }
+
+  /**
+   * Spec 029 F-14 (design §20.3): wrap a single provider streaming call so
+   * the same logic is callable from both the outer iteration loop AND the
+   * inner format-repair retry loop. No new behavior over the previous
+   * inline block — this is an extract-method refactor that makes re-streaming
+   * with the same provider/tools/system-prompt straightforward.
+   *
+   * Resets the streaming markup filter at the top so `suppressAfterMatch`
+   * formatters scope to a single response.
+   */
+  private async streamOnce(
+    activeProvider: Provider,
+    messages: Message[],
+    tools: ToolDefinition[],
+    systemPrompt: string | undefined,
+  ): Promise<{
+    fullText: string;
+    nativeToolCalls: ParsedToolCall[];
+    usage: { inputTokens: number; outputTokens: number } | null;
+  }> {
+    this.textFilter.reset();
+    const stream: AsyncIterableIterator<StreamChunk> = activeProvider.chat(messages, tools, {
+      model: this._model,
+      stream: true,
+      systemPrompt,
+      maxTokens: this.options.maxTokens,
+      temperature: this.options.temperature,
+    });
+    const { toolCalls, usage, fullText } = await this.renderer.render(stream, this.textFilter);
+    return { fullText, nativeToolCalls: toolCalls, usage };
   }
 
   /** Prompt the user for input and return their answer (used by ask_user intercept). */

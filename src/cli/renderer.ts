@@ -519,6 +519,36 @@ export class Renderer {
     this.bridge?.emit('unclear-signal', { message });
   }
 
+  /**
+   * Spec 029 F-14: surfaced on each format-repair retry. `specific_issue`
+   * comes from the formatter's ParseError. Spec 040 R-8 hook point —
+   * structured shape kept stable for future observability log emission.
+   */
+  showFormatRepair(specificIssue: string): void {
+    const label = specificIssue.replace(/_/g, ' ');
+    process.stderr.write(
+      chalk.yellow(`\n  ⚠  Tool-call parse failed (${label}). Asking the model to retry…\n`),
+    );
+    this.bridge?.emit('format-repair', { specific_issue: specificIssue });
+  }
+
+  /**
+   * Spec 029 F-14: surfaced after MAX_REPAIR_RETRIES (2) consecutive parse
+   * failures within the same assistant turn — the agent loop breaks after
+   * this event. Spec 040 R-8 hook point.
+   */
+  showFormatRepairExhausted(error: { specific_issue: string; message: string }): void {
+    process.stderr.write(
+      chalk.red(
+        `\n  ✗  Format repair gave up after retries — model kept emitting malformed tool calls.\n    Last issue: ${error.specific_issue.replace(/_/g, ' ')} (${error.message})\n`,
+      ),
+    );
+    this.bridge?.emit('format-repair-exhausted', {
+      specific_issue: error.specific_issue,
+      message: error.message,
+    });
+  }
+
   private stopThinkingSpinner(): void {
     if (this.thinkingSpinner) {
       this.thinkingSpinner.stop();

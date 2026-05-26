@@ -1,5 +1,5 @@
 import type { ToolDefinition } from '../../providers/interface.js';
-import type { ToolCallFormatter, ParsedToolCall } from './interface.js';
+import type { ToolCallFormatter, ParsedToolCall, ParseError, ParseResult } from './interface.js';
 import { tryParseToolCall } from './fenced-block.js';
 
 /**
@@ -33,6 +33,81 @@ const MARKUP_PATTERN = /<tool_call>[\s\S]*?(?:<\/tool_call>|$)/g;
 // One of two valid output shapes inside the qwen-xml envelope (see class JSDoc above).
 const HERMES_FN_RE = /<function=([\w.-]+)>/;
 const HERMES_PARAM_RE = /<parameter=([\w.-]+)>\s*([\s\S]*?)\s*<\/parameter>/g;
+
+/** Center an ≤200-char window around a position in the source text. */
+function clipAround(text: string, pos: number, span = 200): string {
+  if (pos < 0) return text.slice(0, span);
+  const start = Math.max(0, pos - Math.floor(span / 2));
+  return text.slice(start, start + span);
+}
+
+/**
+ * Diagnose why a qwen-xml `<tool_call>` body failed to yield a tool call.
+ * Called only after both `tryParseToolCall` and `tryParseHermesEnvelope`
+ * returned null, so the body is definitively malformed — the question is just
+ * which `specific_issue` best describes it.
+ */
+function diagnoseQwenBody(body: string, example: string): ParseError {
+  const offending = clipAround(body, 0);
+  // Hermes-envelope attempt: if it has <function=...> tags, the issue is the
+  // hermes shape itself was malformed (no params extracted), not JSON.
+  if (/<function=/.test(body)) {
+    return {
+      kind: 'parse',
+      message: 'hermes-style <function=...> envelope was present but no parameters parsed',
+      expected_format_example: example,
+      offending_substring: offending,
+      specific_issue: 'bad_arg_type',
+    };
+  }
+  let parsed: unknown;
+  try {
+    parsed = JSON.parse(body.trim());
+  } catch (err) {
+    return {
+      kind: 'parse',
+      message: `tool_call body is not valid JSON: ${err instanceof Error ? err.message : String(err)}`,
+      expected_format_example: example,
+      offending_substring: offending,
+      specific_issue: 'invalid_json',
+    };
+  }
+  if (parsed === null || typeof parsed !== 'object') {
+    return {
+      kind: 'parse',
+      message: 'tool_call body parsed as JSON but is not an object',
+      expected_format_example: example,
+      offending_substring: offending,
+      specific_issue: 'bad_arg_type',
+    };
+  }
+  const obj = parsed as Record<string, unknown>;
+  if (typeof obj.name !== 'string' || obj.name.length === 0) {
+    return {
+      kind: 'parse',
+      message: 'tool_call body is missing the required "name" field',
+      expected_format_example: example,
+      offending_substring: offending,
+      specific_issue: 'unknown_tool',
+    };
+  }
+  if (obj.arguments !== undefined && (typeof obj.arguments !== 'object' || obj.arguments === null)) {
+    return {
+      kind: 'parse',
+      message: '"arguments" must be an object',
+      expected_format_example: example,
+      offending_substring: offending,
+      specific_issue: 'bad_arg_type',
+    };
+  }
+  return {
+    kind: 'parse',
+    message: 'tool_call body did not match any supported shape',
+    expected_format_example: example,
+    offending_substring: offending,
+    specific_issue: 'other',
+  };
+}
 
 function tryParseHermesEnvelope(text: string): ParsedToolCall | null {
   const fn = HERMES_FN_RE.exec(text);
@@ -79,6 +154,67 @@ export class QwenXmlFormatter implements ToolCallFormatter {
 
   exampleCall(): string {
     return '<tool_call>\n{"name": "read", "arguments": {"file_path": "/path/to/file"}}\n</tool_call>';
+  }
+
+  /**
+   * Spec 029 F-14: non-throwing parse with per-failure-mode structured errors.
+   * Mirrors `parse` but returns a `ParseError` instead of silently dropping
+   * malformed tool-call markup so the agent loop can ask the model to retry.
+   *
+   * Engagement: when no `<tool_call>` marker is present at all, this returns
+   * `{ ok: true, toolCalls: [] }` — plain text is not an error. The Hermes
+   * envelope fallback (spec 028 F-23) is preserved inside the closed-tag path.
+   */
+  parseStrict(text: string): ParseResult {
+    if (!text.includes('<tool_call>')) {
+      return { ok: true, toolCalls: [], remainingText: text };
+    }
+
+    const toolCalls: ParsedToolCall[] = [];
+    let remainingText = text;
+    let lastError: ParseError | null = null;
+
+    TOOL_CALL_CLOSED_RE.lastIndex = 0;
+    let match: RegExpExecArray | null;
+    while ((match = TOOL_CALL_CLOSED_RE.exec(text)) !== null) {
+      const body = match[1];
+      const tc = tryParseToolCall(body) ?? tryParseHermesEnvelope(body);
+      if (tc) {
+        toolCalls.push(tc);
+        remainingText = remainingText.replace(match[0], '');
+        continue;
+      }
+      lastError = diagnoseQwenBody(body, this.exampleCall());
+    }
+
+    if (toolCalls.length === 0) {
+      TOOL_CALL_UNCLOSED_RE.lastIndex = 0;
+      const unclosed = TOOL_CALL_UNCLOSED_RE.exec(text);
+      if (unclosed) {
+        const body = unclosed[1];
+        const tc = tryParseToolCall(body) ?? tryParseHermesEnvelope(body);
+        if (tc) {
+          toolCalls.push(tc);
+          remainingText = remainingText.replace(unclosed[0], '');
+        } else if (!lastError) {
+          lastError = {
+            kind: 'parse',
+            message: 'tool_call tag was opened but never closed',
+            expected_format_example: this.exampleCall(),
+            offending_substring: clipAround(text, text.indexOf('<tool_call>')),
+            specific_issue: 'unclosed_tag',
+          };
+        }
+      }
+    }
+
+    if (toolCalls.length > 0) {
+      return { ok: true, toolCalls, remainingText: remainingText.trim() };
+    }
+    if (lastError) {
+      return { ok: false, error: lastError };
+    }
+    return { ok: true, toolCalls: [], remainingText: text };
   }
 
   buildSystemPrompt(tools: ToolDefinition[]): string {

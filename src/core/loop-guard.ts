@@ -105,8 +105,7 @@ export class LoopGuard {
     try {
       argsJson = canonicalJson(args);
     } catch (err) {
-      // eslint-disable-next-line no-console — intentional surface so users
-      // see when their model is producing unhashable arg shapes
+      // Intentional: surface to the user when their model produces unhashable arg shapes.
       console.warn(
         `[LoopGuard] canonicalJson failed for tool=${toolName}; skipping guard for this call. Cause: ${err instanceof Error ? err.message : String(err)}`,
       );

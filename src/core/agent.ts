@@ -234,12 +234,15 @@ export class Agent {
         });
       }
 
-      let { fullText, nativeToolCalls, usage } = await this.streamOnce(
+      const firstStream = await this.streamOnce(
         activeProvider,
         activeMessages,
         activeTools,
         activeSystemPrompt,
       );
+      // `fullText` is reassigned by the F-14 repair loop below; the rest are not.
+      let fullText = firstStream.fullText;
+      const { nativeToolCalls, usage } = firstStream;
 
       if (usage) {
         lastInputTokens = usage.inputTokens;

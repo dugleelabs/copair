@@ -31,6 +31,11 @@ import {
 // A rotating set of realistic model IDs covering frontier-cloud, frontier
 // open-weight, and small open-weight families — exercises different paths
 // through the shipped data layer.
+// Post-F-11 (strict unknowns), a realistic session only switches between
+// models that actually resolve — an unknown ID now throws UnknownModelError
+// rather than silently resolving. So every ID here resolves; the two former
+// fall-through placeholders were replaced with real reclassified-small models
+// (F-12) that exercise the late rules.
 const MIXED_IDS = [
   'claude-opus-4-7',
   'claude-sonnet-4-6',
@@ -48,8 +53,8 @@ const MIXED_IDS = [
   'codestral-2501',
   'glm-4-9b',
   'mixtral-8x7b',
-  'unknown-model-2099',  // exercises fall-through path
-  'another-fake-id',
+  'qwen2.5-coder:7b',  // small (F-12)
+  'claude-haiku-4-5',  // large frontier-cloud
 ] as const;
 
 describe('getCapabilities — hot path latency (NF-02 target: <0.5ms)', () => {
@@ -61,8 +66,16 @@ describe('getCapabilities — hot path latency (NF-02 target: <0.5ms)', () => {
     getCapabilities('qwen.qwen3-coder-480b-a35b-v1:0');
   });
 
-  bench('single cold lookup (totally-unknown-model) — full miss path (slowest)', () => {
-    getCapabilities('something-nobody-has-heard-of-2099');
+  bench('unknown model → UnknownModelError (error path; includes did-you-mean Levenshtein)', () => {
+    // Post-F-11 the "full miss" path throws instead of resolving. The error
+    // path is off the hot path (a session never repeats it), but measuring it
+    // documents the did-you-mean suggestion cost. try/catch so the bench
+    // framework measures rather than fails.
+    try {
+      getCapabilities('something-nobody-has-heard-of-2099');
+    } catch {
+      /* expected UnknownModelError */
+    }
   });
 
   bench('mixed-model loop (18 IDs, simulates a session with frequent /model switches)', () => {
@@ -100,7 +113,12 @@ describe('explainCapabilities — diagnostic path (slightly slower; not on hot p
     explainCapabilities('claude-opus-4-7');
   });
 
-  bench('explainCapabilities for unknown model', () => {
-    explainCapabilities('something-nobody-has-heard-of-2099');
+  bench('explainCapabilities for unknown model (error path)', () => {
+    // explainCapabilities also throws UnknownModelError post-F-11.
+    try {
+      explainCapabilities('something-nobody-has-heard-of-2099');
+    } catch {
+      /* expected UnknownModelError */
+    }
   });
 });

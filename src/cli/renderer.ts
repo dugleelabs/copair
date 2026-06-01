@@ -533,6 +533,41 @@ export class Renderer {
   }
 
   /**
+   * Spec 029 F-15b: bash stdout or stderr exceeded its overflow budget and
+   * was head+tail truncated. Fired once per truncated stream (stdout and
+   * stderr each fire independently when both overflow). Spec 040 R-8 hook
+   * point.
+   */
+  showBashTruncated(label: 'stdout' | 'stderr', originalTokens: number): void {
+    process.stderr.write(
+      chalk.yellow(`\n  ⚠  bash ${label} truncated (~${originalTokens} tokens). Recovery hint appended.\n`),
+    );
+    this.bridge?.emit('bash-truncated', { label, originalTokens });
+  }
+
+  /**
+   * Spec 029 F-15b: `read` refused to surface a large file without an
+   * explicit `limit`. Spec 040 R-8 hook point.
+   */
+  showReadOverflow(filePath: string, lineCount: number): void {
+    process.stderr.write(
+      chalk.yellow(`\n  ⚠  read overflow: ${filePath} has ${lineCount} lines. Asked the model to retry with a \`limit\`.\n`),
+    );
+    this.bridge?.emit('read-overflow', { filePath, lineCount });
+  }
+
+  /**
+   * Spec 029 F-15b: `grep` hit its `max_results` cap with at least one more
+   * match available. Spec 040 R-8 hook point.
+   */
+  showGrepOverflow(pattern: string, maxResults: number): void {
+    process.stderr.write(
+      chalk.yellow(`\n  ⚠  grep overflow: more than ${maxResults} matches for /${pattern}/. Showing first ${maxResults}.\n`),
+    );
+    this.bridge?.emit('grep-overflow', { pattern, maxResults });
+  }
+
+  /**
    * Spec 029 F-14: surfaced after MAX_REPAIR_RETRIES (2) consecutive parse
    * failures within the same assistant turn — the agent loop breaks after
    * this event. Spec 040 R-8 hook point.

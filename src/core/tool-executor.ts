@@ -23,6 +23,8 @@ export interface ExecutionResult {
   denied?: boolean;
   /** Actual tool execution time in ms (excludes approval prompt wait). */
   _durationMs?: number;
+  /** Spec 029 F-15b: declarative side-effects (overflow/truncation) the agent dispatches. */
+  events?: import('../tools/interface.js').ToolEvent[];
 }
 
 function buildUnifiedDiff(oldContent: string, newContent: string, filePath: string): string {

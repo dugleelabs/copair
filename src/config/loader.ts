@@ -8,6 +8,9 @@ import {
   setModelOverrides,
   type ModelOverride,
 } from '../core/model-capabilities.js';
+import { setBashOverflowTokens } from '../tools/bash.js';
+import { setReadOverflowLines } from '../tools/read.js';
+import { setGrepDefaultMaxResults } from '../tools/grep.js';
 
 const CURRENT_CONFIG_VERSION = 1;
 
@@ -139,8 +142,21 @@ export function loadConfig(projectDir?: string): CopairConfig {
   //   2. Layer `model_overrides` ON TOP. On conflict, the newer field wins
   //      because it's both more expressive and the recommended path.
   applyModelOverridesToCapabilities(config);
+  applyToolOverflowConfig(config);
 
   return config;
+}
+
+/**
+ * Spec 029 F-15b (T-J07): apply `config.tools.{read,bash,grep}` knobs to the
+ * per-tool runtime defaults. No-op when the user hasn't set them.
+ */
+export function applyToolOverflowConfig(config: CopairConfig): void {
+  const tools = config.tools;
+  if (!tools) return;
+  if (tools.read?.overflow_lines !== undefined) setReadOverflowLines(tools.read.overflow_lines);
+  if (tools.bash?.overflow_tokens !== undefined) setBashOverflowTokens(tools.bash.overflow_tokens);
+  if (tools.grep?.default_max_results !== undefined) setGrepDefaultMaxResults(tools.grep.default_max_results);
 }
 
 /**

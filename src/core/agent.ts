@@ -524,6 +524,24 @@ export class Agent {
         // Gate allowed — show completed with actual execution time
         this.renderer.completeToolExecution(label, result._durationMs ?? 0);
 
+        // Spec 029 F-15b (§24 R-8): dispatch any overflow/truncation events
+        // the tool surfaced. Tools stay renderer-free; the agent translates
+        // declarative events into Renderer.show* calls (and spec 040 logger
+        // sites once that ships).
+        for (const ev of result.events ?? []) {
+          switch (ev.kind) {
+            case 'bash_truncated':
+              this.renderer.showBashTruncated(ev.label, ev.originalTokens);
+              break;
+            case 'read_overflow':
+              this.renderer.showReadOverflow(ev.filePath, ev.lineCount);
+              break;
+            case 'grep_overflow':
+              this.renderer.showGrepOverflow(ev.pattern, ev.maxResults);
+              break;
+          }
+        }
+
         // Spec 029 F-13: observe the (tool, args, result) tuple. The guard
         // hashes the raw result string (pre-context-wrapping) so that
         // wrapping artifacts can't mask a true repeat. On nudge, inject a

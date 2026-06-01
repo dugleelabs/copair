@@ -1,6 +1,20 @@
 import { readFileSync, existsSync } from 'node:fs';
 import { z } from 'zod';
-import type { Tool } from './interface.js';
+import type { Tool, ToolEvent } from './interface.js';
+
+/**
+ * Spec 029 F-15b (design §21.2.1): the maximum file size, in lines, that
+ * `read` will surface without an explicit `limit` arg. When exceeded, read
+ * returns a structured `[overflow]` error instead of silent partial content —
+ * lying about what the model received causes premature task_complete on
+ * missing info. Tunable via `config.tools.read.overflow_lines` (T-J07)
+ * through `setReadOverflowLines`.
+ */
+let READ_OVERFLOW_LINES = 1500;
+
+export function setReadOverflowLines(n: number): void {
+  READ_OVERFLOW_LINES = n;
+}
 
 export const ReadInputSchema = z.object({
   file_path: z.string().min(1),
@@ -36,6 +50,26 @@ export const readTool: Tool = {
     try {
       const content = readFileSync(filePath, 'utf-8');
       const lines = content.split('\n');
+
+      // Spec 029 F-15b: refuse to surface a large file without an explicit
+      // `limit`. Returns a model-readable `[overflow]` error so the model
+      // gets a clear "retry with a range" signal instead of silent partial
+      // content. With an explicit `limit`, honour it — never refuse beyond
+      // what the user asked for.
+      if (limit === undefined && lines.length > READ_OVERFLOW_LINES) {
+        const events: ToolEvent[] = [
+          { kind: 'read_overflow', filePath, lineCount: lines.length },
+        ];
+        return {
+          content:
+            `[overflow] File "${filePath}" has ${lines.length} lines, which exceeds the read overflow threshold (${READ_OVERFLOW_LINES}). ` +
+            `Pass \`limit\` (and optionally \`offset\`) to read a range — e.g. ` +
+            '`{ limit: 500 }` or `{ offset: 1000, limit: 500 }`.',
+          isError: true,
+          events,
+        };
+      }
+
       const startIdx = Math.max(0, offset - 1);
       const sliced = limit ? lines.slice(startIdx, startIdx + limit) : lines.slice(startIdx);
 

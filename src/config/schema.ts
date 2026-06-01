@@ -125,6 +125,24 @@ export const SmallModelsConfigSchema = z.object({
  */
 import { ModelOverrideSchema } from '../core/model-capabilities.js';
 
+/**
+ * Spec 029 F-15b (design §21.2.6): per-tool overflow knobs. All fields are
+ * optional — when omitted, each tool uses its built-in default (read 1500
+ * lines, bash 4000 tokens, grep 50 results). Users on large-context models
+ * can raise the thresholds; users on small-context models can lower them.
+ */
+export const ToolsConfigSchema = z.object({
+  read: z.object({
+    overflow_lines: z.number().int().positive().optional(),
+  }).optional(),
+  bash: z.object({
+    overflow_tokens: z.number().int().positive().optional(),
+  }).optional(),
+  grep: z.object({
+    default_max_results: z.number().int().positive().optional(),
+  }).optional(),
+});
+
 export const CopairConfigSchema = z.object({
   version: z.number().int().positive(),
   default_model: z.string().optional(),
@@ -149,6 +167,8 @@ export const CopairConfigSchema = z.object({
    * derived by generic logic. See `docs/model-capabilities.md` for examples.
    */
   model_overrides: z.record(z.string(), ModelOverrideSchema).optional(),
+  /** Spec 029 F-15b: per-tool overflow knobs (read/bash/grep). */
+  tools: ToolsConfigSchema.optional(),
 });
 
 export type CopairConfig = z.infer<typeof CopairConfigSchema>;

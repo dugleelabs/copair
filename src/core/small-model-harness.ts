@@ -8,7 +8,8 @@ const SMALL_MODEL_SYSTEM_PROMPT = `Small model operating rules:
 1. Call tools one at a time. Wait for the result before chaining the next call.
 2. If the task or a required detail is unclear, emit \`UNCLEAR: <your question>\` on its own line before calling any tool.
 3. Call the \`task_complete\` tool with a one-sentence summary when the task is finished.
-4. Use the \`ask_user\` tool to collect information you cannot infer from context.`;
+4. Use the \`ask_user\` tool to collect information you cannot infer from context.
+5. Before editing a file, read it first. Before calling a tool with a path, id, or name, verify it exists via list/search. Never invent identifiers.`;
 
 const SMALL_MODEL_PER_TURN_REMINDER =
   'Reminder: one tool call at a time; call task_complete when the task is done.';

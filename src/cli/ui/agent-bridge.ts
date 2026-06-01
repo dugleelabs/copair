@@ -94,6 +94,12 @@ export interface AgentBridgeEvents {
   'format-repair': (data: { specific_issue: string }) => void;
   /** Spec 029 F-14: format-repair retries exhausted; agent turn breaks. */
   'format-repair-exhausted': (data: { specific_issue: string; message: string }) => void;
+  /** Spec 029 F-15b: bash stdout/stderr was head+tail truncated by the overflow helper. */
+  'bash-truncated': (data: { label: 'stdout' | 'stderr'; originalTokens: number }) => void;
+  /** Spec 029 F-15b: `read` refused to surface a large file without an explicit `limit`. */
+  'read-overflow': (data: { filePath: string; lineCount: number }) => void;
+  /** Spec 029 F-15b: `grep` capped at `max_results` with at least one more match available. */
+  'grep-overflow': (data: { pattern: string; maxResults: number }) => void;
 }
 
 // ── AgentBridge ─────────────────────────────────────────────────────────────

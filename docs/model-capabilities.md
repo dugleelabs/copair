@@ -37,6 +37,36 @@ Resolution happens in layers. Later layers win:
 
 Each layer is a deep-merge. Override `max_tokens` for one model? You only need to set that one field — everything else falls through.
 
+The **safe defaults** in layer 1 are the floor for a model copair *recognizes* (its family matched a tier rule) but for which the shipped data has no specific `context_window`/`max_tokens`. A model that matches **no** rule at all is handled differently — see below.
+
+## Unknown models are strict
+
+As of **v1.10.0**, copair no longer guesses for a model whose family it doesn't recognize. Previously an unmatched ID silently fell back to large-tier defaults; that quietly engaged the wrong harness behavior for unknown small models. Now copair raises an `UnknownModelError` at startup:
+
+```
+Unknown model "my-finetune-7b". Copair couldn't classify it.
+Add a model_overrides entry with at least a `tier`:
+
+  model_overrides:
+    my-finetune-7b:
+      tier: small   # or large
+```
+
+Declare at least a `tier` and copair derives the rest (format, harness defaults) generically. Add more fields if the defaults are wrong for your endpoint. See [docs/local-models.md](./local-models.md) for ready-to-paste Ollama / vLLM / LM Studio examples.
+
+## Tier boundary: ≤22B is "small"
+
+The classifier's tier is a proxy for "does this model need the small-model harness." As of v1.10.0 the boundary is **≤22B ⇒ small**. Models at the boundary are treated as small (harness on): Mistral-Small 3 (22B), DeepSeek-R1 distill 14B, Phi-4 14B. Larger models run without the harness. If your model sits near the boundary and you disagree with copair's call, override `tier` explicitly.
+
+## What the harness does (small tier)
+
+When a model is small-tier, copair wraps the agent loop with guardrails tuned for weaker models. At a high level (full detail in the spec 029 design):
+
+- **Operating-rules prompt** — one-tool-at-a-time, ask `UNCLEAR:` when the task is ambiguous, call `task_complete` when done, and **read/verify before acting** (never invent paths or ids).
+- **Loop guard** — if the model re-issues the same `(tool, args, result)` it gets nudged, then the turn halts, instead of looping forever.
+- **Format-error repair** — malformed tool-call markup is diagnosed and the model is asked to retry with a corrected example (capped at 2 retries).
+- **Tool-aware output overflow** — `bash` output is head+tail truncated with a recovery hint, `read` refuses oversized files without a `limit`, and `grep` flags when results are capped. Thresholds are tunable under the `tools.{read,bash,grep}` config section.
+
 ## What `--explain-model` shows you
 
 ```sh
@@ -67,7 +97,7 @@ User override applied: none
 
 You should write a `model_overrides` entry when:
 
-- **Copair doesn't recognize your model.** A new fine-tune, a custom-named SKU, a private endpoint with a non-standard ID. Without an override, you get safe defaults (32k context, 4k output, no harness) which are usually too conservative.
+- **Copair doesn't recognize your model.** A new fine-tune, a custom-named SKU, a private endpoint with a non-standard ID. As of v1.10.0 copair **refuses to start** with an `UnknownModelError` rather than silently guessing — declare at least a `tier` (see [Unknown models are strict](#unknown-models-are-strict) below).
 - **Copair recognizes the model but a value is wrong.** Maybe Anthropic raised Claude's output limit and the shipped data is stale.
 - **You want to force a particular formatter or harness flag.** Even when copair's defaults are right, sometimes you want to test alternatives.
 

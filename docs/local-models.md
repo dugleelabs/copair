@@ -2,6 +2,8 @@
 
 This guide covers how to run Copair with local models, including Qwen 3.5, using Ollama, vLLM, or other OpenAI-compatible servers.
 
+> **As of v1.10.0, copair requires unknown models to declare at least a `tier`.** Any model whose family isn't in copair's shipped classifier rules raises an `UnknownModelError` at startup instead of silently guessing. The examples below include a `model_overrides` entry so they run as-is. The well-known Qwen IDs used here are already recognized as `small`, so their override is explicit-but-redundant — but keep the pattern when you swap in a model copair doesn't know (a fine-tune, a custom SKU, a renamed GGUF). See [docs/model-capabilities.md](./model-capabilities.md) for the full override schema.
+
 ## Option 1: Ollama (Recommended)
 
 Ollama is the easiest way to run local models like Qwen 3.5.
@@ -49,6 +51,16 @@ providers:
         id: qwen2.5-coder:7b
         supports_tool_calling: false
         context_window: 131072
+
+# Declare the tier for each model id. Required for any model copair doesn't
+# recognize; explicit-but-redundant for the well-known Qwen ids above.
+model_overrides:
+  qwen2.5:7b:
+    tier: small
+  qwen2.5:14b:
+    tier: small
+  qwen2.5-coder:7b:
+    tier: small
 
 permissions:
   mode: auto-approve  # Skip approval prompts for faster iteration
@@ -105,6 +117,12 @@ providers:
         supports_tool_calling: false
         context_window: 131072
 
+# Required for unrecognized models; copair normalizes the key (strips the
+# `Qwen/` org prefix) so you can write the id exactly as above.
+model_overrides:
+  Qwen/Qwen2.5-7B-Instruct:
+    tier: small
+
 permissions:
   mode: auto-approve
 ```
@@ -145,6 +163,12 @@ providers:
         id: qwen2.5-7b-instruct  # Model name from LM Studio
         supports_tool_calling: false
         context_window: 131072
+
+# Declare the tier for the LM Studio model id. If you load a model copair
+# doesn't recognize, this entry is what keeps it from erroring at startup.
+model_overrides:
+  qwen2.5-7b-instruct:
+    tier: small
 
 permissions:
   mode: auto-approve
@@ -244,3 +268,20 @@ ollama serve  # For Ollama
 - Set `supports_tool_calling: false` in config
 - Use more explicit language: "Please use the read tool to check the file"
 - Consider switching to `auto-approve` mode for smoother interaction
+
+### `Unknown model "X"` at startup
+```
+Unknown model "my-custom-gguf". Copair couldn't classify it.
+```
+As of v1.10.0, copair won't guess capabilities for a model whose family it
+doesn't recognize. Add a `model_overrides` entry with at least a `tier` (as
+shown in each config example above) and try again:
+```yaml
+model_overrides:
+  my-custom-gguf:
+    tier: small   # or large
+```
+The key is the model `id` (copair normalizes it, so org prefixes like `Qwen/`
+and host prefixes are handled for you). Declare `tier` and copair derives the
+format and harness defaults generically; add more fields only if the defaults
+are wrong for your endpoint. Full schema: [docs/model-capabilities.md](./model-capabilities.md).

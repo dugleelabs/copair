@@ -37,10 +37,12 @@ afterAll(() => {
 
 describe('bash — overflow integration', () => {
   it('large stdout truncates with marker + recovery hint + bash_truncated event', async () => {
-    // 100 KB of stdout via printf-loop. Threshold is the default 4000 tokens
-    // (~16 KB), so this trips truncation.
+    // ~130 KB of stdout. Threshold is the default 4000 tokens (~16 KB), so
+    // this trips truncation. Generated via `node -e` rather than a Unix shell
+    // loop so the test is cross-platform (the bash tool runs cmd.exe on
+    // Windows, where `for i in $(seq …)` is invalid syntax).
     const result = await bashTool.execute({
-      command: 'for i in $(seq 1 5000); do printf "line-%d aaaaaaaaaaaaaaaaaaaaaa\\n" $i; done',
+      command: `node -e "for(let i=0;i<5000;i++)console.log('line-'+i+' aaaaaaaaaaaaaaaaaaaaaa')"`,
     });
     expect(result.content).toContain('[stdout]');
     expect(result.content).toMatch(/\[\.\.\. \d+ lines truncated \.\.\.\]/);
@@ -60,8 +62,9 @@ describe('bash — overflow integration', () => {
   });
 
   it('failing command surfaces stderr with isError=true', async () => {
+    // `node -e` for cross-platform stdout+stderr+non-zero-exit (no `sh -c`).
     const result = await bashTool.execute({
-      command: 'sh -c "echo out; echo err >&2; exit 7"',
+      command: `node -e "console.log('out');console.error('err');process.exit(7)"`,
     });
     expect(result.isError).toBe(true);
     expect(result.content).toContain('[stdout]');
@@ -71,13 +74,13 @@ describe('bash — overflow integration', () => {
   });
 
   it('failure-path stderr truncates independently of stdout', async () => {
-    // Tight budget (500 tokens ≈ 2000 chars); pipe `yes` through `head -c` to
-    // generate ~5000 chars on each stream — well over budget. `exit 1` forces
-    // execSync into its catch path so we exercise the failure-path branch.
+    // Tight budget (500 tokens ≈ 2000 chars); write ~6000 chars to each stream
+    // — well over budget — via `node -e` so it's cross-platform. `exit(1)`
+    // forces execSync into its catch path so we exercise the failure-path branch.
     setBashOverflowTokens(500);
     try {
       const result = await bashTool.execute({
-        command: 'yes | head -c 5000; yes | head -c 5000 >&2; exit 1',
+        command: `node -e "process.stdout.write('o'.repeat(6000));process.stderr.write('e'.repeat(6000));process.exit(1)"`,
       });
       expect(result.isError).toBe(true);
       const kinds = (result.events ?? []).map((e) =>

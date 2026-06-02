@@ -126,10 +126,8 @@ export const SmallModelsConfigSchema = z.object({
 import { ModelOverrideSchema } from '../core/model-capabilities.js';
 
 /**
- * Spec 029 F-15b (design §21.2.6): per-tool overflow knobs. All fields are
- * optional — when omitted, each tool uses its built-in default (read 1500
- * lines, bash 4000 tokens, grep 50 results). Users on large-context models
- * can raise the thresholds; users on small-context models can lower them.
+ * spec 029 (F-15b): per-tool overflow knobs. All optional — omitted fields use
+ * the built-in defaults (read 1500 lines, bash 4000 tokens, grep 50 results).
  */
 export const ToolsConfigSchema = z.object({
   read: z.object({

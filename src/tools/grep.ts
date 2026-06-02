@@ -3,10 +3,9 @@ import { z } from 'zod';
 import type { Tool, ToolEvent } from './interface.js';
 
 /**
- * Spec 029 F-15b (design §21.2.2): default for `max_results` when the model
- * doesn't pass one. Tunable via `config.tools.grep.default_max_results`
- * (T-J07) through `setGrepDefaultMaxResults`. The model can also pass an
- * explicit `max_results` per call to override per-invocation.
+ * spec 029 (F-15b): default for `max_results` when the model doesn't pass one.
+ * Tunable via `config.tools.grep.default_max_results`; the model can also pass
+ * an explicit `max_results` per call.
  */
 let GREP_DEFAULT_MAX_RESULTS = 50;
 
@@ -45,9 +44,8 @@ export const grepTool: Tool = {
     const maxResults = (input.max_results as number) ?? GREP_DEFAULT_MAX_RESULTS;
 
     try {
-      // Spec 029 F-15b: ask grep for one extra line so we can detect overflow
-      // without scanning the whole tree. `-m N` is supported on both GNU and
-      // BSD grep (verified during design §21.2.2 cross-platform note).
+      // spec 029 (F-15b): ask grep for one extra line to detect overflow
+      // without scanning the whole tree. `-m N` works on GNU and BSD grep.
       const args = ['-rn', '--color=never'];
       if (glob) args.push(`--include=${glob}`);
       args.push('-m', String(maxResults + 1));
@@ -69,9 +67,7 @@ export const grepTool: Tool = {
           { kind: 'grep_overflow', pattern, maxResults },
         ];
         return {
-          // isError stays unset — capped results are still actionable; the
-          // model can choose to narrow the pattern or proceed with what it
-          // has (design §21.2.2).
+          // isError stays unset — capped results are still actionable.
           content:
             output +
             `\n\n[overflow] More than ${maxResults} matches found (showing first ${maxResults}). ` +

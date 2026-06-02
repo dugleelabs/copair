@@ -3,12 +3,10 @@ import { z } from 'zod';
 import type { Tool, ToolEvent } from './interface.js';
 
 /**
- * Spec 029 F-15b (design §21.2.1): the maximum file size, in lines, that
- * `read` will surface without an explicit `limit` arg. When exceeded, read
- * returns a structured `[overflow]` error instead of silent partial content —
- * lying about what the model received causes premature task_complete on
- * missing info. Tunable via `config.tools.read.overflow_lines` (T-J07)
- * through `setReadOverflowLines`.
+ * spec 029 (F-15b): max file size, in lines, that `read` surfaces without an
+ * explicit `limit`. Over this, it returns a structured `[overflow]` error
+ * rather than silent partial content (which causes premature task_complete on
+ * missing info). Tunable via `config.tools.read.overflow_lines`.
  */
 let READ_OVERFLOW_LINES = 1500;
 
@@ -51,11 +49,9 @@ export const readTool: Tool = {
       const content = readFileSync(filePath, 'utf-8');
       const lines = content.split('\n');
 
-      // Spec 029 F-15b: refuse to surface a large file without an explicit
-      // `limit`. Returns a model-readable `[overflow]` error so the model
-      // gets a clear "retry with a range" signal instead of silent partial
-      // content. With an explicit `limit`, honour it — never refuse beyond
-      // what the user asked for.
+      // spec 029 (F-15b): refuse a large file without an explicit `limit` —
+      // return a model-readable `[overflow]` error so it retries with a range.
+      // An explicit `limit` is always honoured.
       if (limit === undefined && lines.length > READ_OVERFLOW_LINES) {
         const events: ToolEvent[] = [
           { kind: 'read_overflow', filePath, lineCount: lines.length },

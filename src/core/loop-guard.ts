@@ -1,26 +1,12 @@
 /**
- * Result-aware tool-call loop guard (spec 029 F-13, design §19).
+ * spec 029 (F-13): result-aware tool-call loop guard. Observes the
+ * (toolName, args, result) tuple from every tool execution and catches the
+ * agent getting stuck on the same call with the same result — a common
+ * small-model failure mode.
  *
- * Observes the (toolName, args, result) tuple from every tool execution and
- * detects when the agent is stuck calling the same tool with the same args
- * and getting the same result back — a common failure mode for small models
- * that don't update their plan based on tool output.
- *
- * Policy:
- *   - 2 consecutive identical tuples → emit a nudge (injected into the next
- *     iteration's conversation as a [SYSTEM] user-role message) so the model
- *     gets a chance to course-correct.
- *   - 3 consecutive identical tuples → halt the agent turn with a synthetic
- *     tool_result and a clean break, preventing unbounded token spend.
- *
- * Memory is bounded: only the last 3 tuple hashes are retained per agent.
- * Cost per call is negligible — canonical-JSON stringify the args, SHA-256
- * the result once (so identical 5MB outputs don't bloat the deque), then
- * one SHA-256 of (toolName, argsJson, resultHash).
- *
- * Engagement: runs unconditionally for both small and large model tiers in
- * v1 — large-tier models also occasionally produce result-loops on
- * deterministic APIs. If profiling later shows overhead, gate on tier.
+ * Policy: 2 consecutive identical tuples → nudge (a [SYSTEM] message injected
+ * into the next iteration); 3 → halt the turn with a synthetic tool_result.
+ * Bounded memory (last 3 tuple hashes). Runs for both tiers in v1.
  */
 import { createHash } from 'node:crypto';
 

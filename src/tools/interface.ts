@@ -7,11 +7,9 @@ export interface ToolDefinition {
 }
 
 /**
- * Spec 029 F-15b / §24 R-8: declarative side-effects a tool can surface to the
- * agent loop. Keeps tools renderer-free — they emit events; the agent
- * dispatches each event to the matching `Renderer.show*` method (and the
- * future spec 040 logger). Optional and additive: existing tools that emit
- * no events continue to work unchanged.
+ * spec 029 (F-15b): declarative side-effects a tool surfaces to the agent loop,
+ * which dispatches each to the matching `Renderer.show*` method. Keeps tools
+ * renderer-free; additive (tools emitting no events are unaffected).
  */
 export type ToolEvent =
   | { kind: 'bash_truncated'; label: 'stdout' | 'stderr'; originalTokens: number }
@@ -21,7 +19,7 @@ export type ToolEvent =
 export interface ToolResult {
   content: string;
   isError?: boolean;
-  /** Spec 029 F-15b: zero or more overflow/truncation events for the agent to dispatch. */
+  /** spec 029 (F-15b): overflow/truncation events for the agent to dispatch. */
   events?: ToolEvent[];
 }
 

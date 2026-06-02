@@ -491,24 +491,13 @@ export class Renderer {
     this.bridge?.emit('max-turn-warning', { limit });
   }
 
-  /**
-   * Spec 029 F-13: nudge surfaced when the loop guard detects 2 consecutive
-   * identical (tool, args, result) tuples. The matching message is also
-   * injected into the conversation as a [SYSTEM] user-role message so the
-   * next iteration's provider call sees it; this method is the visible
-   * channel for the user / future spec 040 log emission (R-8 hook).
-   */
+  /** spec 029 (F-13): loop guard nudged after 2 identical tool repeats. */
   showLoopNudge(message: string): void {
     process.stderr.write(chalk.yellow(`\n  ⚠  Loop guard: ${message}\n`));
     this.bridge?.emit('loop-nudge', { message });
   }
 
-  /**
-   * Spec 029 F-13: halt surfaced when the loop guard detects 3 consecutive
-   * identical (tool, args, result) tuples. The agent loop pushes a synthetic
-   * tool_result + breaks via the existing `denied` pattern; this method
-   * makes the halt visible to the user / spec 040 logger (R-8 hook).
-   */
+  /** spec 029 (F-13): loop guard halted the turn after 3 identical tool repeats. */
   showLoopHalt(reason: string): void {
     process.stderr.write(chalk.red(`\n  ✗  Loop guard halt: ${reason}\n`));
     this.bridge?.emit('loop-halt', { reason });
@@ -519,11 +508,7 @@ export class Renderer {
     this.bridge?.emit('unclear-signal', { message });
   }
 
-  /**
-   * Spec 029 F-14: surfaced on each format-repair retry. `specific_issue`
-   * comes from the formatter's ParseError. Spec 040 R-8 hook point —
-   * structured shape kept stable for future observability log emission.
-   */
+  /** spec 029 (F-14): surfaced on each format-repair retry (also a spec 040 observability hook). */
   showFormatRepair(specificIssue: string): void {
     const label = specificIssue.replace(/_/g, ' ');
     process.stderr.write(
@@ -532,12 +517,7 @@ export class Renderer {
     this.bridge?.emit('format-repair', { specific_issue: specificIssue });
   }
 
-  /**
-   * Spec 029 F-15b: bash stdout or stderr exceeded its overflow budget and
-   * was head+tail truncated. Fired once per truncated stream (stdout and
-   * stderr each fire independently when both overflow). Spec 040 R-8 hook
-   * point.
-   */
+  /** spec 029 (F-15b): bash stdout/stderr was head+tail truncated (fires once per stream). */
   showBashTruncated(label: 'stdout' | 'stderr', originalTokens: number): void {
     process.stderr.write(
       chalk.yellow(`\n  ⚠  bash ${label} truncated (~${originalTokens} tokens). Recovery hint appended.\n`),
@@ -545,10 +525,7 @@ export class Renderer {
     this.bridge?.emit('bash-truncated', { label, originalTokens });
   }
 
-  /**
-   * Spec 029 F-15b: `read` refused to surface a large file without an
-   * explicit `limit`. Spec 040 R-8 hook point.
-   */
+  /** spec 029 (F-15b): `read` refused a large file with no explicit `limit`. */
   showReadOverflow(filePath: string, lineCount: number): void {
     process.stderr.write(
       chalk.yellow(`\n  ⚠  read overflow: ${filePath} has ${lineCount} lines. Asked the model to retry with a \`limit\`.\n`),
@@ -556,10 +533,7 @@ export class Renderer {
     this.bridge?.emit('read-overflow', { filePath, lineCount });
   }
 
-  /**
-   * Spec 029 F-15b: `grep` hit its `max_results` cap with at least one more
-   * match available. Spec 040 R-8 hook point.
-   */
+  /** spec 029 (F-15b): `grep` hit its `max_results` cap with more matches available. */
   showGrepOverflow(pattern: string, maxResults: number): void {
     process.stderr.write(
       chalk.yellow(`\n  ⚠  grep overflow: more than ${maxResults} matches for /${pattern}/. Showing first ${maxResults}.\n`),
@@ -567,11 +541,7 @@ export class Renderer {
     this.bridge?.emit('grep-overflow', { pattern, maxResults });
   }
 
-  /**
-   * Spec 029 F-14: surfaced after MAX_REPAIR_RETRIES (2) consecutive parse
-   * failures within the same assistant turn — the agent loop breaks after
-   * this event. Spec 040 R-8 hook point.
-   */
+  /** spec 029 (F-14): surfaced after repair retries are exhausted; the turn breaks. */
   showFormatRepairExhausted(error: { specific_issue: string; message: string }): void {
     process.stderr.write(
       chalk.red(

@@ -54,9 +54,8 @@ export function detectSensitivePaths(command: string): string[] {
 }
 
 /**
- * Spec 029 F-15b (design §21.2.3): approximate token budget at which bash
- * stdout/stderr gets head+tail truncated. Tunable via
- * `config.tools.bash.overflow_tokens` (T-J07) through `setBashOverflowTokens`.
+ * spec 029 (F-15b): token budget at which bash stdout/stderr gets head+tail
+ * truncated. Tunable via `config.tools.bash.overflow_tokens`.
  */
 let BASH_OVERFLOW_TOKENS = 4000;
 
@@ -65,13 +64,10 @@ export function setBashOverflowTokens(n: number): void {
 }
 
 /**
- * Truncate one stream (stdout or stderr) and label it. When truncation fires,
- * append the recovery hint pointing the model at `head`/`tail`/`sed`/`grep`
- * pipes — without the hint, small models tend to proceed past the marker as
- * if it didn't matter.
- *
- * Returns `{ text, truncated }` so the caller can emit a `bash_truncated`
- * event for the agent loop to dispatch to `Renderer.showBashTruncated`.
+ * Truncate and label one stream. On truncation, append a recovery hint
+ * (`head`/`tail`/`sed`/`grep`) — without it, small models proceed past the
+ * marker as if it didn't matter. Returns `{ text, truncated }` so the caller
+ * can emit a `bash_truncated` event.
  */
 function maybeTruncateBashStream(
   text: string,
@@ -123,9 +119,7 @@ export const bashTool: Tool = {
         timeout,
         shell: process.platform === 'win32' ? 'cmd.exe' : '/bin/bash',
       });
-      // Spec 029 F-15b: truncate the success path's stdout if it busts the
-      // overflow budget. The renderer event lets spec 040 log the truncation
-      // and the recovery hint gives the model a next action.
+      // spec 029 (F-15b): truncate the success path's stdout if over budget.
       const out = maybeTruncateBashStream(result, 'stdout');
       const events: ToolEvent[] = [];
       if (out.truncated) {
@@ -134,9 +128,8 @@ export const bashTool: Tool = {
       return { content: out.text || result, events: events.length ? events : undefined };
     } catch (err) {
       const execErr = err as { stdout?: string; stderr?: string; status?: number };
-      // Spec 029 F-15b: truncate stdout and stderr *independently* so a huge
-      // stderr stack trace can't squeeze out the early stdout lines (or
-      // vice-versa). Each emits its own bash_truncated event.
+      // spec 029 (F-15b): truncate stdout and stderr independently so a huge
+      // stderr can't squeeze out early stdout. Each emits its own event.
       const rawStdout = execErr.stdout ?? '';
       const rawStderr = execErr.stderr ?? '';
       const outPart = maybeTruncateBashStream(rawStdout, 'stdout');

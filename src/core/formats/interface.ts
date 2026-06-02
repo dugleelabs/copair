@@ -9,9 +9,9 @@ export interface ParsedToolCall {
 }
 
 /**
- * Spec 029 F-14: structured parse error returned by `parseStrict`. The
- * `specific_issue` enum drives the repair-message template (§20.2) and the
- * spec 040 observability hook on `Renderer.showFormatRepair(specific_issue)`.
+ * spec 029 (F-14): structured parse error returned by `parseStrict`. The
+ * `specific_issue` enum drives the repair-message template and the renderer's
+ * format-repair event.
  */
 export interface ParseError {
   kind: 'parse';
@@ -25,7 +25,7 @@ export interface ParseError {
 }
 
 /**
- * Spec 029 F-14: non-throwing parse result. Success carries the same shape as
+ * spec 029 (F-14): non-throwing parse result. Success carries the same shape as
  * legacy `parse(text)` so call sites can swap in `parseStrict` without
  * remapping fields.
  */
@@ -50,21 +50,17 @@ export interface ToolCallFormatter {
   exampleCall(): string;
 
   /**
-   * Spec 029 F-14: non-throwing variant that returns a structured error on
-   * parse failure. Optional so third-party formatters that implement
-   * `ToolCallFormatter` keep working unchanged — callers that need the
-   * structured-error path go through `parseWithStrictFallback` which
-   * synthesises a generic error when this method is absent. Built-in copair
-   * formatters (qwen-xml, dsml, fenced-block) implement it natively.
+   * spec 029 (F-14): non-throwing variant returning a structured error on parse
+   * failure. Optional — third-party formatters without it degrade through
+   * `parseWithStrictFallback`; the built-in formatters implement it natively.
    */
   parseStrict?(text: string): ParseResult;
 }
 
 /**
- * Default-impl wrapper for the F-14 repair loop. When the formatter does not
- * implement `parseStrict` (third-party formatters), wraps the legacy `parse`
- * in try/catch and synthesises a generic `specific_issue: 'other'` error.
- * Built-in copair formatters override with rich, per-issue diagnostics.
+ * spec 029 (F-14): wrapper for the repair loop. When a formatter doesn't
+ * implement `parseStrict`, wraps legacy `parse` in try/catch and synthesises a
+ * generic `specific_issue: 'other'` error.
  */
 export function parseWithStrictFallback(
   formatter: ToolCallFormatter,

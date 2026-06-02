@@ -265,15 +265,10 @@ export class Agent {
       let cleanedText = fullText;
       let repairExhausted = false;
       if (fullText) {
-        // Spec 029 F-14: tool-call format-error repair loop. Small models
-        // occasionally emit malformed markup (unclosed tags, invalid JSON,
-        // missing name fields). The repair loop asks the model to retry with
-        // a structured `[SYSTEM]` nudge, capped at MAX_REPAIR_RETRIES per
-        // assistant turn (design §20.3, NF-04 budget).
-        //
-        // Engagement policy: small-tier only. Large models with reliable
-        // native tool calling rarely fail format, so we skip the extra parse
-        // round-trip on their successful turns.
+        // spec 029 (F-14): tool-call format-error repair loop. Small models
+        // sometimes emit malformed markup; ask them to retry via a `[SYSTEM]`
+        // nudge, capped at MAX_REPAIR_RETRIES. Small-tier only — large models
+        // with reliable native tool calling keep the legacy parse path.
         if (this.harness?.isSmallModel) {
           let parseResult = parseWithStrictFallback(this.formatter, fullText);
           let repairAttempts = 0;
@@ -284,8 +279,7 @@ export class Agent {
           ) {
             repairAttempts++;
             this.renderer.showFormatRepair(parseResult.error.specific_issue);
-            // Inject as a user-role [SYSTEM] message, matching the loop-guard
-            // nudge pattern in §19.2 — no new instance state.
+            // Inject as a user-role [SYSTEM] message (same pattern as the loop-guard nudge).
             this.conversation.appendText('user', buildRepairMessage(parseResult.error));
 
             const reMessages = await this.contextWindow.checkAndTruncate(
@@ -337,10 +331,8 @@ export class Agent {
             cleanedText = parseResult.remainingText;
           }
         } else {
-          // Large-model legacy path — same behavior as before spec 029 F-14.
-          // Some providers (e.g. DeepSeek) leak their native markup (DSML)
-          // into text content even when using the OpenAI-compatible tool
-          // calling API; we still merge any leaked calls with native calls.
+          // Large-model legacy path (pre-F-14 behavior). Some providers (e.g.
+          // DeepSeek) leak native markup into text; merge those with native calls.
           const parsed = this.formatter.parse(fullText);
           if (parsed.toolCalls.length > 0) {
             const nativeKeys = new Set(
@@ -527,10 +519,8 @@ export class Agent {
         // Gate allowed — show completed with actual execution time
         this.renderer.completeToolExecution(label, result._durationMs ?? 0);
 
-        // Spec 029 F-15b (§24 R-8): dispatch any overflow/truncation events
-        // the tool surfaced. Tools stay renderer-free; the agent translates
-        // declarative events into Renderer.show* calls (and spec 040 logger
-        // sites once that ships).
+        // spec 029 (F-15b): dispatch overflow/truncation events the tool
+        // surfaced. Tools stay renderer-free; the agent maps events to Renderer.show* calls.
         for (const ev of result.events ?? []) {
           switch (ev.kind) {
             case 'bash_truncated':
@@ -545,12 +535,10 @@ export class Agent {
           }
         }
 
-        // Spec 029 F-13: observe the (tool, args, result) tuple. The guard
-        // hashes the raw result string (pre-context-wrapping) so that
-        // wrapping artifacts can't mask a true repeat. On nudge, inject a
-        // [SYSTEM] user-role message that the next iteration will see. On
-        // halt, push a synthetic tool_result and break the outer loop via
-        // the existing `denied` pattern used by the max-tool-calls guard.
+        // spec 029 (F-13): observe the (tool, args, result) tuple. Hashes the
+        // raw result (pre-context-wrapping). On nudge, inject a [SYSTEM]
+        // user-role message; on halt, push a synthetic tool_result and break
+        // via the existing `denied` pattern.
         const guardAction = this.loopGuard.observe(tc.name, toolInput, result.content);
         if (guardAction.kind === 'halt') {
           this.renderer.showLoopHalt(guardAction.reason);
@@ -637,14 +625,10 @@ export class Agent {
   }
 
   /**
-   * Spec 029 F-14 (design §20.3): wrap a single provider streaming call so
-   * the same logic is callable from both the outer iteration loop AND the
-   * inner format-repair retry loop. No new behavior over the previous
-   * inline block — this is an extract-method refactor that makes re-streaming
-   * with the same provider/tools/system-prompt straightforward.
-   *
-   * Resets the streaming markup filter at the top so `suppressAfterMatch`
-   * formatters scope to a single response.
+   * spec 029 (F-14): wrap a single provider streaming call so it's callable
+   * from both the outer iteration loop and the inner format-repair retry loop.
+   * Resets the streaming markup filter so `suppressAfterMatch` formatters scope
+   * to one response.
    */
   private async streamOnce(
     activeProvider: Provider,

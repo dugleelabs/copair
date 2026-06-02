@@ -1,12 +1,8 @@
 /**
- * Spec 029 F-15b (design §21.2.4): head+tail truncation with a marker.
- *
- * Used **only by bash.ts** — `read.ts` and `grep.ts` have their own overflow
- * strategies that don't lie about what the model received (structured
- * `[overflow]` error and result-count cap with tail message respectively).
- * Silent middle truncation only makes sense when (a) the content is unbounded
- * shell output and (b) the caller pairs it with a recovery hint so the model
- * has a clear next action.
+ * spec 029 (F-15b): head+tail truncation with a marker. Used **only by bash.ts**
+ * — `read.ts` and `grep.ts` have their own overflow strategies that don't lie
+ * about what the model received. Silent middle truncation only makes sense for
+ * unbounded shell output paired with a recovery hint.
  */
 
 const APPROX_CHARS_PER_TOKEN = 4;

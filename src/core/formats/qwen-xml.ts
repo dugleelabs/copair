@@ -157,13 +157,10 @@ export class QwenXmlFormatter implements ToolCallFormatter {
   }
 
   /**
-   * Spec 029 F-14: non-throwing parse with per-failure-mode structured errors.
-   * Mirrors `parse` but returns a `ParseError` instead of silently dropping
-   * malformed tool-call markup so the agent loop can ask the model to retry.
-   *
-   * Engagement: when no `<tool_call>` marker is present at all, this returns
-   * `{ ok: true, toolCalls: [] }` — plain text is not an error. The Hermes
-   * envelope fallback (spec 028 F-23) is preserved inside the closed-tag path.
+   * spec 029 (F-14): non-throwing parse returning a `ParseError` per failure
+   * mode instead of silently dropping malformed markup. No `<tool_call>` marker
+   * → `{ ok: true, toolCalls: [] }` (plain text isn't an error). The Hermes
+   * envelope fallback (spec 028 F-23) is preserved in the closed-tag path.
    */
   parseStrict(text: string): ParseResult {
     if (!text.includes('<tool_call>')) {

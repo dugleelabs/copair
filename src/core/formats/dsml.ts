@@ -108,7 +108,7 @@ export class DsmlFormatter implements ToolCallFormatter {
   }
 
   /**
-   * Spec 029 F-14: non-throwing parse with structured per-failure-mode errors.
+   * spec 029 (F-14): non-throwing parse with structured per-failure-mode errors.
    * Plain text (no DSML envelope) returns `{ ok: true, toolCalls: [] }`.
    */
   parseStrict(text: string): ParseResult {

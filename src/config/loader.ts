@@ -148,8 +148,8 @@ export function loadConfig(projectDir?: string): CopairConfig {
 }
 
 /**
- * Spec 029 F-15b (T-J07): apply `config.tools.{read,bash,grep}` knobs to the
- * per-tool runtime defaults. No-op when the user hasn't set them.
+ * spec 029 (F-15b): apply `config.tools.{read,bash,grep}` knobs to the per-tool
+ * runtime defaults. No-op when the user hasn't set them.
  */
 export function applyToolOverflowConfig(config: CopairConfig): void {
   const tools = config.tools;

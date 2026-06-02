@@ -132,10 +132,9 @@ export class FencedBlockFormatter implements ToolCallFormatter {
   }
 
   /**
-   * Spec 029 F-14: non-throwing parse with structured per-failure-mode errors.
-   * Plain text without ``` fences returns `{ ok: true, toolCalls: [] }`. A
-   * fence that doesn't match the closed-fence regex is reported as
-   * `unclosed_tag`.
+   * spec 029 (F-14): non-throwing parse with structured per-failure-mode errors.
+   * Plain text without ``` fences → `{ ok: true, toolCalls: [] }`; an unclosed
+   * fence is reported as `unclosed_tag`.
    */
   parseStrict(text: string): ParseResult {
     if (!text.includes('```')) {

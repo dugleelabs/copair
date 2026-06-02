@@ -78,6 +78,9 @@ describe('classifyModel — frontier proprietary (large)', () => {
     expect(classifyModel('kimi-k2').tier).toBe('large');
     expect(classifyModel('kimi-k2-5').tier).toBe('large');
     expect(classifyModel('kimi-k2-6').tier).toBe('large');
+    // K-less form (e.g. "Kimi 2.6" → normalized "kimi-2-6")
+    expect(classifyModel('kimi-2-6').tier).toBe('large');
+    expect(classifyModel('kimi-2').tier).toBe('large');
   });
 });
 

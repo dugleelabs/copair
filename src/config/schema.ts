@@ -103,10 +103,42 @@ export const SmallModelsConfigSchema = z.object({
    * `classifyModel()` classifier but loses to the `--small-model` /
    * `--no-small-model` CLI flag. Use to flag a custom fine-tune as small,
    * or to opt a known-small model out of the harness.
+   *
+   * **Backwards compatible with spec 029**: at config-load time, entries
+   * here are folded into the top-level `model_overrides` field below as
+   * `{ tier: 'small' | 'large' }`. If both fields are set for the same
+   * model, `model_overrides` wins on conflict (it's the newer, more
+   * expressive field).
    */
   tier_overrides: z.record(z.string(), z.enum(['small', 'large'])).optional(),
   /** Maximum number of tool calls permitted per agent turn for small models (default: 20). */
   max_tool_calls: z.number().int().positive().optional(),
+});
+
+/**
+ * Per-model capability override (spec 029). All fields optional; deep-merged
+ * onto the base capabilities derived by `getCapabilities()` from generic logic.
+ *
+ * Re-imported from `model-capabilities.ts` to keep the schema definition in
+ * one place (the capabilities module owns the contract; config just references
+ * it as a record value).
+ */
+import { ModelOverrideSchema } from '../core/model-capabilities.js';
+
+/**
+ * spec 029 (F-15b): per-tool overflow knobs. All optional — omitted fields use
+ * the built-in defaults (read 1500 lines, bash 4000 tokens, grep 50 results).
+ */
+export const ToolsConfigSchema = z.object({
+  read: z.object({
+    overflow_lines: z.number().int().positive().optional(),
+  }).optional(),
+  bash: z.object({
+    overflow_tokens: z.number().int().positive().optional(),
+  }).optional(),
+  grep: z.object({
+    default_max_results: z.number().int().positive().optional(),
+  }).optional(),
 });
 
 export const CopairConfigSchema = z.object({
@@ -125,6 +157,16 @@ export const CopairConfigSchema = z.object({
   security: SecurityConfigSchema.optional(),
   network: NetworkConfigSchema.optional(),
   small_models: SmallModelsConfigSchema.optional(),
+  /**
+   * Per-model capability overrides (spec 029). Keys are normalized at
+   * config-load time via `normalizeModelId` so users can write the model ID
+   * in any host's form (Bedrock-prefixed, OpenRouter-prefixed, etc.) and
+   * lookups resolve correctly. Deep-merged on top of base capabilities
+   * derived by generic logic. See `docs/model-capabilities.md` for examples.
+   */
+  model_overrides: z.record(z.string(), ModelOverrideSchema).optional(),
+  /** Spec 029 F-15b: per-tool overflow knobs (read/bash/grep). */
+  tools: ToolsConfigSchema.optional(),
 });
 
 export type CopairConfig = z.infer<typeof CopairConfigSchema>;

@@ -6,9 +6,21 @@ export interface ToolDefinition {
   inputSchema: Record<string, unknown>;
 }
 
+/**
+ * spec 029 (F-15b): declarative side-effects a tool surfaces to the agent loop,
+ * which dispatches each to the matching `Renderer.show*` method. Keeps tools
+ * renderer-free; additive (tools emitting no events are unaffected).
+ */
+export type ToolEvent =
+  | { kind: 'bash_truncated'; label: 'stdout' | 'stderr'; originalTokens: number }
+  | { kind: 'read_overflow'; filePath: string; lineCount: number }
+  | { kind: 'grep_overflow'; pattern: string; maxResults: number };
+
 export interface ToolResult {
   content: string;
   isError?: boolean;
+  /** spec 029 (F-15b): overflow/truncation events for the agent to dispatch. */
+  events?: ToolEvent[];
 }
 
 export interface Tool {

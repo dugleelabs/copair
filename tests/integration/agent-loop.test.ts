@@ -2,12 +2,22 @@
  * Integration tests: full agent loop with a mock provider.
  * No real HTTP calls — the mock provider emits scripted StreamChunk sequences.
  */
-import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
+import { describe, it, expect, vi, beforeEach, afterEach, beforeAll, afterAll } from 'vitest';
 import { Agent } from '../../src/core/agent.js';
 import { ToolRegistry } from '../../src/tools/registry.js';
 import { ApprovalGate } from '../../src/core/approval-gate.js';
 import { ToolExecutor } from '../../src/core/tool-executor.js';
+import { setModelOverrides } from '../../src/core/model-capabilities.js';
 import type { Provider, StreamChunk, Message, ToolDefinition } from '../../src/providers/interface.js';
+
+// Spec 029 F-11: unknown model IDs throw UnknownModelError. Declare the test
+// fixture model up-front so Agent construction can resolve its capabilities.
+beforeAll(() => {
+  setModelOverrides({ 'mock-model': { tier: 'large' } });
+});
+afterAll(() => {
+  setModelOverrides({});
+});
 
 /** Build a ToolExecutor with an auto-approve gate so tests never block on stdin. */
 function makeExecutor(registry: ToolRegistry): ToolExecutor {

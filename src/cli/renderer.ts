@@ -491,9 +491,67 @@ export class Renderer {
     this.bridge?.emit('max-turn-warning', { limit });
   }
 
+  /** spec 029 (F-13): loop guard nudged after 2 identical tool repeats. */
+  showLoopNudge(message: string): void {
+    process.stderr.write(chalk.yellow(`\n  ⚠  Loop guard: ${message}\n`));
+    this.bridge?.emit('loop-nudge', { message });
+  }
+
+  /** spec 029 (F-13): loop guard halted the turn after 3 identical tool repeats. */
+  showLoopHalt(reason: string): void {
+    process.stderr.write(chalk.red(`\n  ✗  Loop guard halt: ${reason}\n`));
+    this.bridge?.emit('loop-halt', { reason });
+  }
+
   showUnclearSignal(message: string): void {
     process.stderr.write(chalk.yellow(`\n  ⚠  Model uncertainty: ${message}\n`));
     this.bridge?.emit('unclear-signal', { message });
+  }
+
+  /** spec 029 (F-14): surfaced on each format-repair retry (also a spec 040 observability hook). */
+  showFormatRepair(specificIssue: string): void {
+    const label = specificIssue.replace(/_/g, ' ');
+    process.stderr.write(
+      chalk.yellow(`\n  ⚠  Tool-call parse failed (${label}). Asking the model to retry…\n`),
+    );
+    this.bridge?.emit('format-repair', { specific_issue: specificIssue });
+  }
+
+  /** spec 029 (F-15b): bash stdout/stderr was head+tail truncated (fires once per stream). */
+  showBashTruncated(label: 'stdout' | 'stderr', originalTokens: number): void {
+    process.stderr.write(
+      chalk.yellow(`\n  ⚠  bash ${label} truncated (~${originalTokens} tokens). Recovery hint appended.\n`),
+    );
+    this.bridge?.emit('bash-truncated', { label, originalTokens });
+  }
+
+  /** spec 029 (F-15b): `read` refused a large file with no explicit `limit`. */
+  showReadOverflow(filePath: string, lineCount: number): void {
+    process.stderr.write(
+      chalk.yellow(`\n  ⚠  read overflow: ${filePath} has ${lineCount} lines. Asked the model to retry with a \`limit\`.\n`),
+    );
+    this.bridge?.emit('read-overflow', { filePath, lineCount });
+  }
+
+  /** spec 029 (F-15b): `grep` hit its `max_results` cap with more matches available. */
+  showGrepOverflow(pattern: string, maxResults: number): void {
+    process.stderr.write(
+      chalk.yellow(`\n  ⚠  grep overflow: more than ${maxResults} matches for /${pattern}/. Showing first ${maxResults}.\n`),
+    );
+    this.bridge?.emit('grep-overflow', { pattern, maxResults });
+  }
+
+  /** spec 029 (F-14): surfaced after repair retries are exhausted; the turn breaks. */
+  showFormatRepairExhausted(error: { specific_issue: string; message: string }): void {
+    process.stderr.write(
+      chalk.red(
+        `\n  ✗  Format repair gave up after retries — model kept emitting malformed tool calls.\n    Last issue: ${error.specific_issue.replace(/_/g, ' ')} (${error.message})\n`,
+      ),
+    );
+    this.bridge?.emit('format-repair-exhausted', {
+      specific_issue: error.specific_issue,
+      message: error.message,
+    });
   }
 
   private stopThinkingSpinner(): void {

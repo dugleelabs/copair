@@ -3,6 +3,14 @@ import { resolve } from 'node:path';
 import { homedir } from 'node:os';
 import { parse as parseYaml } from 'yaml';
 import { CopairConfigSchema, type CopairConfig } from './schema.js';
+import {
+  normalizeModelId,
+  setModelOverrides,
+  type ModelOverride,
+} from '../core/model-capabilities.js';
+import { setBashOverflowTokens } from '../tools/bash.js';
+import { setReadOverflowLines } from '../tools/read.js';
+import { setGrepDefaultMaxResults } from '../tools/grep.js';
 
 const CURRENT_CONFIG_VERSION = 1;
 
@@ -123,5 +131,65 @@ export function loadConfig(projectDir?: string): CopairConfig {
   const interpolated = interpolateDeep(merged) as Record<string, unknown>;
 
   // Validate with Zod
-  return CopairConfigSchema.parse(interpolated);
+  const config = CopairConfigSchema.parse(interpolated);
+
+  // Spec 029: build the normalized model-overrides map and push it into the
+  // capabilities module so `getCapabilities(modelId)` can apply user overrides.
+  //
+  // Merge order (matters for backwards-compat with spec 028's tier_overrides):
+  //   1. Seed with `small_models.tier_overrides` (older field, deprecated path).
+  //      Each entry becomes `{ tier: <value> }` on the normalized key.
+  //   2. Layer `model_overrides` ON TOP. On conflict, the newer field wins
+  //      because it's both more expressive and the recommended path.
+  applyModelOverridesToCapabilities(config);
+  applyToolOverflowConfig(config);
+
+  return config;
+}
+
+/**
+ * spec 029 (F-15b): apply `config.tools.{read,bash,grep}` knobs to the per-tool
+ * runtime defaults. No-op when the user hasn't set them.
+ */
+export function applyToolOverflowConfig(config: CopairConfig): void {
+  const tools = config.tools;
+  if (!tools) return;
+  if (tools.read?.overflow_lines !== undefined) setReadOverflowLines(tools.read.overflow_lines);
+  if (tools.bash?.overflow_tokens !== undefined) setBashOverflowTokens(tools.bash.overflow_tokens);
+  if (tools.grep?.default_max_results !== undefined) setGrepDefaultMaxResults(tools.grep.default_max_results);
+}
+
+/**
+ * Spec 029 helper. Normalizes keys via `normalizeModelId` so users can write
+ * the model ID in whatever host form they have (Bedrock-prefixed,
+ * OpenRouter-prefixed, plain) and lookups still resolve. Merges the older
+ * `small_models.tier_overrides` field into the newer `model_overrides`
+ * shape, with `model_overrides` winning on conflict.
+ */
+export function applyModelOverridesToCapabilities(config: CopairConfig): void {
+  const normalized: Record<string, ModelOverride> = {};
+
+  // Step 1: seed from tier_overrides (older field — backwards compat)
+  for (const [key, tier] of Object.entries(config.small_models?.tier_overrides ?? {})) {
+    normalized[normalizeModelId(key)] = { tier };
+  }
+
+  // Step 2: layer model_overrides ON TOP (newer field wins on conflict)
+  for (const [key, value] of Object.entries(config.model_overrides ?? {})) {
+    const normalizedKey = normalizeModelId(key);
+    const existing = normalized[normalizedKey];
+    if (existing) {
+      // Shallow merge — every top-level key in `value` wins over `existing`.
+      // (Deep merge with `recommended_harness` is handled later by `deepMerge`
+      // inside `getCapabilities` against the registry's base. At this layer
+      // we only combine override entries; the nested `recommended_harness`
+      // from a `value` replaces any tier-only seed, which is exactly what
+      // we want for "model_overrides wins on conflict".)
+      normalized[normalizedKey] = { ...existing, ...value };
+    } else {
+      normalized[normalizedKey] = value;
+    }
+  }
+
+  setModelOverrides(normalized);
 }

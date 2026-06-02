@@ -168,23 +168,25 @@ describe('classifyModel — DeepSeek', () => {
     expect(classifyModel('deepseek-reasoner').tier).toBe('large');
   });
 
-  it('R1 distill ≤8B is small, ≥14B is large', () => {
+  it('R1 distill ≤14B is small (spec 029 F-12 ≤22B boundary), ≥32B is large', () => {
     expect(classifyModel('deepseek-r1-distill-1.5b').tier).toBe('small');
     expect(classifyModel('deepseek-r1-distill-7b').tier).toBe('small');
     expect(classifyModel('deepseek-r1-distill-8b').tier).toBe('small');
-    expect(classifyModel('deepseek-r1-distill-14b').tier).toBe('large');
+    expect(classifyModel('deepseek-r1-distill-14b').tier).toBe('small');
     expect(classifyModel('deepseek-r1-distill-32b').tier).toBe('large');
     expect(classifyModel('deepseek-r1-distill-70b').tier).toBe('large');
   });
 });
 
 describe('classifyModel — Mistral and relatives', () => {
-  it('frontier and mid-tier are large', () => {
+  it('frontier and mid-tier are large; Mistral-Small 3+ is small per F-12 ≤22B', () => {
     expect(classifyModel('mistral-large').tier).toBe('large');
     expect(classifyModel('mistral-large-3').tier).toBe('large');
     expect(classifyModel('pixtral-large').tier).toBe('large');
     expect(classifyModel('mistral-medium-3.5').tier).toBe('large');
-    expect(classifyModel('mistral-small-4').tier).toBe('large');
+    // Spec 029 F-12: Mistral-Small 3 is 22B → small tier
+    expect(classifyModel('mistral-small-3').tier).toBe('small');
+    expect(classifyModel('mistral-small-4').tier).toBe('small');
     expect(classifyModel('codestral').tier).toBe('large');
     expect(classifyModel('mixtral-8x7b').tier).toBe('large');
     expect(classifyModel('mixtral-8x22b').tier).toBe('large');
@@ -203,10 +205,13 @@ describe('classifyModel — Mistral and relatives', () => {
 });
 
 describe('classifyModel — Microsoft Phi', () => {
-  it('Phi mid+ is large', () => {
-    expect(classifyModel('phi-4-medium').tier).toBe('large');
-    expect(classifyModel('phi-4-14b').tier).toBe('large');
+  it('Phi 3.5-moe is large; Phi-4 14B is small per F-12 ≤22B', () => {
+    // phi-4-medium isn't a published Microsoft Phi-4 SKU; we rely on the
+    // Phi-3 mid+ rule for moe and the Phi-4 14B rule (now small) otherwise.
     expect(classifyModel('phi-3.5-moe').tier).toBe('large');
+    // Spec 029 F-12: Phi-4 14B is at the small boundary
+    expect(classifyModel('phi-4-14b').tier).toBe('small');
+    expect(classifyModel('phi-4').tier).toBe('small');
   });
 
   it('Phi mini and small dense are small', () => {
@@ -325,9 +330,9 @@ describe('classifyModel — overrides and defaults', () => {
     ).toBe('large');
   });
 
-  it('unknown model IDs default to large (safe — no harness)', () => {
-    expect(classifyModel('totally-unknown-model').tier).toBe('large');
-    expect(classifyModel('my-custom-future-model-2027').tier).toBe('large');
+  it('unknown model IDs return tier: null (spec 029 F-11 strict-unknowns)', () => {
+    expect(classifyModel('totally-unknown-model').tier).toBeNull();
+    expect(classifyModel('my-custom-future-model-2027').tier).toBeNull();
   });
 
   it('result includes family for known models', () => {
@@ -337,9 +342,10 @@ describe('classifyModel — overrides and defaults', () => {
     expect(classifyModel('command-r7b').family).toBe('Command R7B');
   });
 
-  it('result includes family="unknown (default)" for unmatched IDs', () => {
+  it('result includes family="unknown" + matched=null for unmatched IDs', () => {
     const result = classifyModel('totally-unknown-model');
-    expect(result.family).toBe('unknown (default)');
+    expect(result.family).toBe('unknown');
+    expect(result.matched).toBeNull();
   });
 
   it('result includes family="override" when override is used', () => {

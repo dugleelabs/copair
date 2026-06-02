@@ -76,13 +76,18 @@ describe('SmallModelHarness — getSystemPromptAddition', () => {
     expect(harness.getSystemPromptAddition()).toBeNull();
   });
 
-  it('content includes all four rules', () => {
+  it('content includes all five rules', () => {
     const harness = new SmallModelHarness('qwen2.5:7b');
     const addition = harness.getSystemPromptAddition()!;
     expect(addition).toContain('one at a time');
     expect(addition).toContain('UNCLEAR');
     expect(addition).toContain('task_complete');
     expect(addition).toContain('ask_user');
+    // Spec 029 F-15a: inspect-before-act rule.
+    expect(addition).toContain('read it first');
+    expect(addition).toContain('Never invent identifiers');
+    // Structural assertion: five numbered rules, in order.
+    expect(addition).toMatch(/^Small model operating rules:\n1\.[^\n]+\n2\.[^\n]+\n3\.[^\n]+\n4\.[^\n]+\n5\.[^\n]+$/);
   });
 });
 

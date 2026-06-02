@@ -1,6 +1,18 @@
 import { readFileSync, existsSync } from 'node:fs';
 import { z } from 'zod';
-import type { Tool } from './interface.js';
+import type { Tool, ToolEvent } from './interface.js';
+
+/**
+ * spec 029 (F-15b): max file size, in lines, that `read` surfaces without an
+ * explicit `limit`. Over this, it returns a structured `[overflow]` error
+ * rather than silent partial content (which causes premature task_complete on
+ * missing info). Tunable via `config.tools.read.overflow_lines`.
+ */
+let READ_OVERFLOW_LINES = 1500;
+
+export function setReadOverflowLines(n: number): void {
+  READ_OVERFLOW_LINES = n;
+}
 
 export const ReadInputSchema = z.object({
   file_path: z.string().min(1),
@@ -36,6 +48,24 @@ export const readTool: Tool = {
     try {
       const content = readFileSync(filePath, 'utf-8');
       const lines = content.split('\n');
+
+      // spec 029 (F-15b): refuse a large file without an explicit `limit` —
+      // return a model-readable `[overflow]` error so it retries with a range.
+      // An explicit `limit` is always honoured.
+      if (limit === undefined && lines.length > READ_OVERFLOW_LINES) {
+        const events: ToolEvent[] = [
+          { kind: 'read_overflow', filePath, lineCount: lines.length },
+        ];
+        return {
+          content:
+            `[overflow] File "${filePath}" has ${lines.length} lines, which exceeds the read overflow threshold (${READ_OVERFLOW_LINES}). ` +
+            `Pass \`limit\` (and optionally \`offset\`) to read a range — e.g. ` +
+            '`{ limit: 500 }` or `{ offset: 1000, limit: 500 }`.',
+          isError: true,
+          events,
+        };
+      }
+
       const startIdx = Math.max(0, offset - 1);
       const sliced = limit ? lines.slice(startIdx, startIdx + limit) : lines.slice(startIdx);
 

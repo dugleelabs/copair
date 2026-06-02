@@ -4,6 +4,8 @@ import { createRequire } from 'node:module';
 import { resolve, dirname } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { parseArgs } from './cli/args.js';
+import { printExplainModel } from './cli/explain-model.js';
+import { UnknownModelError, getCapabilities } from './core/model-capabilities.js';
 import { Agent } from './core/agent.js';
 import { loadConfig, resolveEnvVarString } from './config/loader.js';
 import { detectGitContext } from './core/git-context.js';
@@ -180,6 +182,38 @@ export async function bootstrapCLI(options: BootstrapOptions = {}): Promise<void
     logger.setLevel(LogLevel.INFO);
   }
 
+  // ── Spec 029: --explain-model short-circuit ────────────────────────────
+  // Resolves model capabilities and exits. Does NOT enter the agent loop,
+  // does NOT prompt for provider auth, does NOT trigger global/project
+  // init. The only setup needed is `loadConfig()` so user `model_overrides`
+  // apply (which `loadConfig` does via `applyModelOverridesToCapabilities`).
+  if (cliOpts.explainModel !== undefined) {
+    if (cliOpts.explainModel === '' || cliOpts.explainModel === null) {
+      process.stderr.write('--explain-model requires a model ID argument\n');
+      process.exit(1);
+    }
+    try {
+      loadConfig(); // honors user model_overrides + tier_overrides
+    } catch {
+      // No config or malformed config — fall through; getCapabilities works
+      // without a loaded config (returns safe defaults + classifier-derived
+      // tier). Better to print SOMETHING than fail on config errors here.
+    }
+    try {
+      printExplainModel(cliOpts.explainModel, { json: cliOpts.json ?? false });
+      process.exit(0);
+    } catch (err) {
+      // Strict-unknowns (spec 029 §17.4): the requested model has no family
+      // match, no override, no shipped entry. Print the structured error and
+      // exit 1 — do not fabricate a trace from safe-defaults.
+      if (err instanceof UnknownModelError) {
+        process.stderr.write(err.message + '\n');
+        process.exit(1);
+      }
+      throw err;
+    }
+  }
+
   checkForUpdates(); // non-blocking background check
 
   const ci = isCI();
@@ -208,6 +242,21 @@ export async function bootstrapCLI(options: BootstrapOptions = {}): Promise<void
     config,
     cliOpts.model,
   );
+
+  // ── Spec 029 §17.5: Strict-unknowns guard at bootstrap ─────────────────
+  // Validate the resolved model is known *before* any init managers run, any
+  // provider auth is attempted, or any agent-loop state is created. An
+  // unknown model is a config error — surface it cleanly and exit 1, with no
+  // half-initialized state.
+  try {
+    getCapabilities(modelAlias);
+  } catch (err) {
+    if (err instanceof UnknownModelError) {
+      process.stderr.write(err.message + '\n');
+      process.exit(1);
+    }
+    throw err;
+  }
 
   // ── Step 5: Plugin system ─────────────────────────────────────────────────
   const pluginManager = new PluginManager();

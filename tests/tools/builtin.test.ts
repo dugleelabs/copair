@@ -88,9 +88,14 @@ describe('Edit tool', () => {
 });
 
 describe('Bash tool', () => {
-  it('executes a command', async () => {
+  it('executes a command (success path is labelled [stdout])', async () => {
+    // Spec 029 F-15b: bash always wraps the success path with a `[stdout]`
+    // label so the model can distinguish stdout from stderr in the failure
+    // path (which interleaves both). Recovery hint only appears on truncation.
     const result = await bashTool.execute({ command: 'echo hello' });
-    expect(result.content.trim()).toBe('hello');
+    expect(result.content).toContain('[stdout]');
+    expect(result.content).toContain('hello');
+    expect(result.events).toBeUndefined();
   });
 
   it('returns error on failing command', async () => {

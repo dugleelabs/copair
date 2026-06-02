@@ -2,6 +2,80 @@
 
 All notable changes to copair are documented here.
 
+## [Unreleased] — Model Capabilities Registry + small-model harness hardening (spec 029)
+
+A single contract — `getCapabilities(modelId)` — replaces ad-hoc per-model substring matches across the codebase. Future Pillar 1 features consult this contract instead of writing `if (modelId.includes('qwen'))` style branches. The reframe established a durable principle: **generic protocol-level logic in code, sparse per-model data in JSON, resilient parsers handle drift on the fly, user `model_overrides` config as the escape hatch.**
+
+The release bundles the foundation (Phases A–D) with five small-model harness improvements (Phases F–J): strict handling of unknown models, a ≤22B-is-small reclassification, a result-aware tool-call loop guard, a tool-call format-error repair loop, and an inspect-before-act prompt rule plus tool-aware output-overflow handling.
+
+### ⚠ Behavior change — unknown models now require a `tier` (F-11)
+
+Previously, a model ID that matched no built-in classifier rule silently fell back to **large**-tier defaults (harness off, 32k/4k safe context). As of this release, an unknown model raises `UnknownModelError` at startup instead of guessing. **If you run a model whose family isn't in copair's shipped rules, add a `model_overrides` entry with at least a `tier`:**
+
+```yaml
+model_overrides:
+  my-custom-model:
+    tier: small   # or large
+```
+
+This is a deliberate trade — silently guessing `large` for an unknown small model engaged the wrong harness behavior and burned tokens. Shipped as a **minor** bump (the old silent-large was wrong behavior, not a supported contract); the fix is loud so you can correct config in one line. See `docs/local-models.md` and `docs/model-capabilities.md`.
+
+### Added
+
+- **`ModelCapabilities` contract + `getCapabilities(modelId)` lookup API** — `src/core/model-capabilities.ts` defines a Zod-validated record with `tier`, `context_window`, `max_tokens`, `native_tool_calling`, `preferred_format`, and `recommended_harness` fields. The lookup pipeline is purely generic: normalize the model ID (spec 028 F-24's `normalizeModelId`) → derive tier via `classifyModel` → derive `preferred_format` via family-prefix function (Qwen → `qwen-xml`, DeepSeek → `dsml`, Claude/GPT/Gemini → `native`, else → `fenced-block`) → derive `recommended_harness` from tier → layer shipped JSON data → layer user `model_overrides`. Each step is documented and inspectable. Never throws; null/undefined/empty model IDs resolve to safe defaults.
+
+- **Sparse `data/model-capabilities.json` shipped with copair** — ~60 family-prefix entries covering frontier cloud (Claude, GPT, Gemini, Grok, Kimi K2, MiniMax, etc.), frontier open-weight (Qwen3-Coder 480B/30B/Next, Qwen3-Max, DeepSeek V3.x/R1, Llama 4 Scout/Maverick, Codestral, Magistral, Mistral Large, Mixtral, GLM 4.5+, gpt-oss, AI21 Jamba, Amazon Nova Pro, Cohere Aya Expanse, BigCode StarCoder2), and small open-weight (Qwen 7B/14B, Qwen3 small, Llama 3.x small, Phi-3/4, Gemma 2/3, Mistral Nemo, Ministral, GLM-4 9B, Granite, Nemotron, Yi-Coder, Reka). Each entry ships only the fields that meaningfully differ from safe defaults — typically `context_window`, `max_tokens`, and `native_tool_calling: 'reliable'` for frontier-cloud. Adding a new model family is a one-line JSON PR with no TypeScript review required. Values are conservative when uncertain — never claim more than the model actually supports.
+
+- **`model_overrides` config field** — Top-level optional field in `~/.copair/config.yaml`. Deep-partial entries deep-merge over base capabilities; users override any field per-model. Keys normalized at config-load via `normalizeModelId` so the same SKU on different hosts resolves correctly without separate entries. See `docs/model-capabilities.md` for full syntax + examples.
+
+- **`--explain-model <id>` CLI flag** — Resolves capabilities for any model ID and prints the trace (or `--json` for a single-line ResolvedCapabilities-shape JSON). Short-circuits before agent-loop init; no provider auth needed; loads config so user overrides are reflected. Output annotates the *source* of each field (`classifier`, `family-prefix`, `shipped-data`, `override`) so users can debug "why did copair pick X for my model?" without grepping source.
+
+- **`docs/model-capabilities.md` user guide** — Covers how `getCapabilities` resolves values (5-layer table), when to write `model_overrides`, override syntax with examples, honest cross-host vs cross-SKU limitations, `tier_overrides` backwards-compat, the shipped data file with "this is not a comprehensive registry" framing, schema-evolution contract.
+
+- **Result-aware tool-call loop guard (F-13, Phase H)** — `src/core/loop-guard.ts` detects when the model re-issues an identical `(tool, args, result)` tuple. On the 2nd identical tuple it injects a `[SYSTEM]` nudge ("try a different approach or call task_complete"); on the 3rd it halts the turn with a synthetic tool result and returns partial output instead of looping forever. Bounded memory (deque of 3), per-turn reset, keys canonicalized so `{a:1,b:2}` and `{b:2,a:1}` hash identically. Surfaced via `Renderer.showLoopNudge` / `showLoopHalt` (spec 040 hook points).
+
+- **Tool-call format-error repair loop (F-14, Phase I)** — When a small model emits malformed tool-call markup (invalid JSON, missing `name`, unclosed tag), copair now diagnoses the specific failure and asks the model to retry with a structured `[SYSTEM]` repair message + a correct example, instead of silently dropping the call. Each built-in formatter (qwen-xml, dsml, fenced-block) gains a non-throwing `parseStrict` returning a typed `ParseError`; third-party formatters degrade gracefully via `parseWithStrictFallback`. Capped at 2 retries per turn (small-tier only — large models with reliable native tool calling keep the legacy path). Surfaced via `Renderer.showFormatRepair` / `showFormatRepairExhausted` (spec 040 hook points).
+
+- **Inspect-before-act prompt rule (F-15a, Phase J)** — A 5th rule added to the small-model system prompt: "Before editing a file, read it first. Before calling a tool with a path, id, or name, verify it exists via list/search. Never invent identifiers."
+
+- **Tool-aware output-overflow handling (F-15b, Phase J)** — Per-tool strategies matched to each tool's semantics instead of one blunt truncator:
+  - `bash`: head+tail truncation (`truncateMiddle`) on both success and failure paths, stdout/stderr independently, each with a `[stdout]`/`[stderr]` label and a recovery hint (`head`/`tail`/`sed`/`grep`). Default 4000-token budget.
+  - `read`: refuses a >1500-line file when no `limit` is passed, returning a structured `[overflow]` error asking the model to chunk — never silent partial content. Explicit `limit` is always honored.
+  - `grep`: detects overflow via `-m (max+1)` and appends an `[overflow]` tail message; result stays non-error since a capped set is still actionable. Default 50 results.
+  - Per-tool thresholds are tunable via the new `tools.{read,bash,grep}` config section. Tools surface declarative events dispatched to `Renderer.showBashTruncated` / `showReadOverflow` / `showGrepOverflow` (spec 040 hook points).
+
+### Changed
+
+- **`resolveFormatter` consumes `getCapabilities`** — `src/core/formats/index.ts` no longer substring-matches `modelId.includes('qwen')` etc. The family-prefix routing lives in `resolvePreferredFormat` inside the capabilities module — one source of truth. `'native'` (frontier cloud) falls back to `fenced-block` inside the text-extraction path (native tool calling goes through provider SDKs, not text formatters).
+
+- **`SmallModelHarness` reads from `getCapabilities`** — `src/core/small-model-harness.ts` constructor now consults the capabilities lookup for `enable_small_model_harness` and other harness flags. The spec 028 `tier_overrides` config path is preserved as a backwards-compat fast-path for callers that don't route through the config loader (e.g. unit tests). Production paths route through `loadConfig` which folds `tier_overrides` into `model_overrides` automatically — both paths produce equivalent behavior.
+
+- **`max_tool_calls` resolution chain** — Now a four-layer fallback: `model_overrides[id].recommended_harness.max_tool_calls` → shipped-data tier-derived value (currently always undefined, so fall-through) → `config.small_models.max_tool_calls` (spec 028 global, preserved) → hardcoded 20. Critical: tier-derived default is `undefined` (not `20`) so users who set `config.small_models.max_tool_calls: N` globally keep seeing N apply — setting it to 20 would have silently shadowed the global.
+
+- **Spec 028 F-23 Hermes envelope fallback reframed as always-on resilient parsing** — `src/core/formats/qwen-xml.ts` Hermes envelope fallback was already unconditional in code (good); only the framing changed. JSDoc reframes it as a property of the *format* ("the qwen-xml format permits two output shapes — clean JSON or Hermes envelope; the parser tries JSON first and falls back to the envelope on parse failure"), not a Qwen3-Coder-specific bug. Any model whose output uses qwen-xml format gets the resilient parser. This is the reference pattern for future format-drift work: solve generically, not per-model.
+
+- **Unknown-model classification is now strict (F-11, Phase F)** — `classifyModel` returns `{ tier: null, family: 'unknown', matched: null }` for IDs that match no rule (instead of defaulting to `large`). `classifyModel` itself stays infallible; `getCapabilities` enforces strictness by throwing `UnknownModelError` unless a `model_overrides` entry or shipped-data row claims the ID. See the behavior-change callout at the top of this entry. *Type note:* `ClassificationResult.tier` widened from `'small' | 'large'` to `'small' | 'large' | null` — any external caller destructuring it as non-null would break at compile time (no external callers known today).
+
+- **≤22B models reclassified as small (F-12, Phase G)** — The tier boundary is now an explicit "≤22B ⇒ small (needs the harness)" proxy. Models at the boundary moved from `large` to `small`: Mistral-Small 3 (22B), DeepSeek-R1 distill 14B, Phi-4 14B. The generic size-suffix catch-all rules were deleted — guessing tier by size without knowing the family conflicts with the strict-unknowns principle (F-11), so unmatched families now error rather than size-guess.
+
+### Architecture
+
+The full implementation was reframed mid-session from "ship a 50-100 entry TypeScript registry with `known_quirks` typed union" to "ship a contract + generic logic + sparse JSON + user escape hatch." The reframe principle now lives as a durable architectural rule:
+
+> Generic protocol-level logic in code; per-model data in JSON config only when genuinely needed; resilient parsers handle drift on the fly; user `model_overrides` is the escape hatch for everything else. **Code never branches on specific model IDs.**
+
+This deliberately limits the registry's growth surface — every per-model patch is a sustainability trap. Adding a model family is one JSON line. Adding a new quirk is reframing it as protocol resilience. Adding a custom fine-tune is a user-config override. The codebase carries zero per-model branches by design.
+
+### Test coverage
+
+- **900/900 tests passing** locally (was 757 pre-spec-029; +143 net across Phases A–J).
+- **31-assertion parity test suite** (`tests/core/parity-spec-029.test.ts`) verifies every shipped formatter routing and harness engagement preserved across the subsumption refactor; Qwen3-Coder 480B Hermes regression check (spec 028 F-23) still passes.
+- **6-case E2E tests** for `--explain-model` (`tests/e2e/explain-model.test.ts`) spawn the real built binary and validate output (pretty + JSON shape against ResolvedCapabilities Zod schema, cross-host normalization, missing arg → non-zero exit).
+- **Harness hardening tests (Phases F–J):** strict-unknowns + reclassification (`tests/core/model-capabilities-strict.test.ts`, `model-tiers-reclassify.test.ts`); loop guard unit + agent integration (`tests/core/loop-guard.test.ts`, `tests/integration/agent-loop-guard.test.ts`); format-repair unit + integration (`tests/core/format-repair.test.ts`, 22 cases); overflow handling (`tests/tools/truncate.test.ts` + `tests/tools/overflow.test.ts`, 18 cases).
+- **Perf benchmark** (`tests/perf/model-capabilities.bench.ts`) — vitest-bench, local-only (not CI-gated). Target <0.5ms median; actual ~1μs typical (claude-opus-4-7 mean 0.6μs, p99 1.3μs). **~500× faster than budget; no caching needed.**
+
+---
+
 ## [Unreleased] — Workflow Engine Correctness and Documentation (spec 028 Phase C)
 
 ### Fixed

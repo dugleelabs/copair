@@ -11,19 +11,29 @@
  * `qwen/qwen3-coder-480b`, Ollama `qwen3-coder:480b`, Together `Qwen/...`).
  * `normalizeModelId()` collapses these into one form before regex matching.
  *
- * Default for unmatched IDs is `large` — the safer choice, since the harness
- * is invasive and unknown frontier models shouldn't be crippled by it.
+ * Spec 029 F-11 (strict unknowns) reshapes the result: an unmatched ID returns
+ * `{ tier: null, family: 'unknown', matched: null }` instead of defaulting to
+ * `large`. `classifyModel` itself remains infallible — callers decide what to
+ * do with the null sentinel. `getCapabilities` enforces strictness by throwing
+ * `UnknownModelError` unless the user supplied a `model_overrides` entry or a
+ * shipped-data row claims the ID.
  */
 
 export type ModelTier = 'small' | 'large';
 
-export interface ClassificationResult {
-  tier: ModelTier;
-  /** Human-readable family name (for telemetry / debugging). */
-  family?: string;
-  /** The regex source that matched (for /audit). */
-  matched?: string;
-}
+/**
+ * Result of classifying a model ID. Discriminated union: a successful match
+ * carries a non-null `tier`, `family`, and `matched` regex source. An
+ * unmatched ID carries `tier: null`, `family: 'unknown'`, `matched: null`.
+ *
+ * ⚠ Breaking type change (spec 029 F-11, 2026-05-18). Previously `tier` was
+ * always `'small' | 'large'` (large was the unknown default). External
+ * callers that destructure `tier` as non-null break at compile time. No
+ * external callers known today; flagged in spec 029 CHANGELOG.
+ */
+export type ClassificationResult =
+  | { tier: ModelTier; family: string; matched: string }
+  | { tier: null; family: 'unknown'; matched: null };
 
 interface TierRule {
   pattern: RegExp;
@@ -67,6 +77,15 @@ export function normalizeModelId(id: string): string {
 
 // Ordered MOST-SPECIFIC FIRST. First match wins. All patterns are written
 // against the post-normalization form (dashes only, no dots).
+//
+// Tier policy (updated 2026-05-18 per spec 029 §17–§18, F-11 + F-12):
+//   - small = "needs the small-model harness" (≤22B as a default proxy)
+//   - large = "harness disengages" (>22B, OR frontier-cloud models known to
+//             handle long task-execution chains without scaffolding)
+//   - Unknown families fall through to UnknownModelError (no silent default).
+//     The generic size-suffix catch-all rules were intentionally deleted in
+//     spec 029 F-12 — guessing by size without knowing the family conflicts
+//     with the strict-unknowns principle.
 const TIER_RULES: TierRule[] = [
   // ── Frontier proprietary ─────────────────────────────────────────
   { pattern: /^claude-/, tier: 'large', family: 'Claude' },
@@ -91,7 +110,8 @@ const TIER_RULES: TierRule[] = [
   { pattern: /^(?:mistral|pixtral)-large/, tier: 'large', family: 'Mistral/Pixtral Large' },
   { pattern: /^magistral-medium/, tier: 'large', family: 'Magistral Medium' },
   { pattern: /^mistral-medium/, tier: 'large', family: 'Mistral Medium' },
-  { pattern: /^mistral-small-[34]/, tier: 'large', family: 'Mistral Small 3+' },
+  // Mistral-Small 3 is 22B — at the ≤22B small boundary (spec 029 F-12)
+  { pattern: /^mistral-small-[34]/, tier: 'small', family: 'Mistral Small 3+' },
   { pattern: /^codestral/, tier: 'large', family: 'Codestral' },
   { pattern: /^mixtral-8x(?:7|22)b/, tier: 'large', family: 'Mixtral' },
   { pattern: /^magistral-small/, tier: 'large', family: 'Magistral Small' },
@@ -123,14 +143,17 @@ const TIER_RULES: TierRule[] = [
   { pattern: /^deepseek-(?:v[34]|r[12])(?!.*-distill)/, tier: 'large', family: 'DeepSeek frontier' },
   { pattern: /^deepseek-(?:chat|reasoner)/, tier: 'large', family: 'DeepSeek API alias' },
   { pattern: /^deepseek-r1.*?-(?:1-5|7|8)b/, tier: 'small', family: 'DeepSeek R1 distill ≤8B' },
-  { pattern: /^deepseek-r1.*?-(?:14|32|70)b/, tier: 'large', family: 'DeepSeek R1 distill ≥14B' },
+  // Split per spec 029 F-12 ≤22B boundary: 14B distill is small, 32/70B large
+  { pattern: /^deepseek-r1.*?-14b/, tier: 'small', family: 'DeepSeek R1 distill 14B' },
+  { pattern: /^deepseek-r1.*?-(?:32|70)b/, tier: 'large', family: 'DeepSeek R1 distill 32B/70B' },
   { pattern: /^deepseek-coder-1-3b/, tier: 'small', family: 'DeepSeek Coder 1.3B' },
 
   // ── Phi (small suffixes first; phi-4 bare = 14B = large) ─────────
   { pattern: /^phi-?3(?:-5)?-(?:mini|small|vision)/, tier: 'small', family: 'Phi-3 small' },
   { pattern: /^phi-?4-(?:mini|multimodal)/, tier: 'small', family: 'Phi-4 small' },
   { pattern: /^phi-?3(?:-5)?-(?:medium|moe)/, tier: 'large', family: 'Phi-3 mid+' },
-  { pattern: /^phi-?4(?:-14b)?\b/, tier: 'large', family: 'Phi-4 14B' },
+  // Phi-4 14B is at the ≤22B small boundary (spec 029 F-12)
+  { pattern: /^phi-?4(?:-14b)?\b/, tier: 'small', family: 'Phi-4 14B' },
 
   // ── Gemma ────────────────────────────────────────────────────────
   { pattern: /^gemma-?[234]-?(?:9|12|26|27|31)b/, tier: 'large', family: 'Gemma 9B+' },
@@ -170,19 +193,49 @@ const TIER_RULES: TierRule[] = [
   { pattern: /^yi-1-5-(?:6|9)b/, tier: 'small', family: 'Yi 1.5 small' },
 
   // ── TII Falcon ───────────────────────────────────────────────────
-  { pattern: /^falcon-?(?:3|h1r|mamba)?-?(?:1|3|7|10)b/, tier: 'small', family: 'Falcon ≤10B' },
+  // Accept multiple variant tags (Falcon3-Mamba-7B etc.) — previously these
+  // fell through to the generic ≤8B catch-all (deleted in spec 029 F-12).
+  {
+    pattern: /^falcon-?(?:3|h1r|mamba|3-mamba|3-h1r)?-?(?:mamba|h1r)?-?(?:1|3|7|10)b/,
+    tier: 'small',
+    family: 'Falcon ≤10B',
+  },
 
   // ── OpenAI open-weights ──────────────────────────────────────────
   { pattern: /^gpt-?oss-?(?:20|120)b/, tier: 'large', family: 'gpt-oss' },
 
-  // ── Generic local-model heuristics (last resort) ─────────────────
-  { pattern: /-(?:0-5|0-6|1|1-5|1-7|3|3-8|4|7|8)b\b/, tier: 'small', family: 'generic ≤8B' },
-  {
-    pattern: /-(?:13|14|22|27|30|32|34|49|65|70|72|80|90|120|180|235|405|480|671)b\b/,
-    tier: 'large',
-    family: 'generic ≥13B',
-  },
+  // Generic size-suffix catch-all rules were deleted in spec 029 F-12 (see
+  // file-header comment). Unknown families now fall through to
+  // UnknownModelError; users must declare unrecognized models in
+  // `model_overrides` (see docs/model-capabilities.md).
 ];
+
+/**
+ * Lowercased, deduped list of family names from TIER_RULES. Used by spec 029
+ * F-11's did-you-mean candidate set (see `suggestDidYouMean` in
+ * model-capabilities.ts). Excludes the generic-size catch-all rules whose
+ * family labels are not meaningful suggestions for users.
+ */
+export const TIER_RULE_FAMILIES: string[] = (() => {
+  const seen = new Set<string>();
+  for (const rule of TIER_RULES) {
+    if (!rule.family) continue;
+    if (rule.family.startsWith('generic')) continue;
+    seen.add(rule.family.toLowerCase());
+  }
+  return [...seen];
+})();
+
+/**
+ * Raw regex pattern sources from TIER_RULES, excluding generic-size
+ * catch-all rules. Consumed by spec 029 F-11's `suggestDidYouMean` which
+ * expands each into typeable model-ID stems for did-you-mean suggestions.
+ */
+export const TIER_RULE_PATTERN_SOURCES: string[] = (() => {
+  return TIER_RULES.filter((r) => !r.family?.startsWith('generic')).map(
+    (r) => r.pattern.source,
+  );
+})();
 
 /**
  * Classify a model ID into a tier (small or large).
@@ -190,20 +243,29 @@ const TIER_RULES: TierRule[] = [
  * Resolution order:
  *   1. Per-model override from config (`tier_overrides[modelId]`)
  *   2. Built-in rule list against the normalized model ID
- *   3. Default `large` (safe — no harness for unknowns)
+ *   3. Sentinel `{ tier: null, family: 'unknown', matched: null }` — callers
+ *      (notably `getCapabilities` per spec 029 F-11) decide whether to error
+ *      or fall through to user-supplied overrides / shipped data.
+ *
+ * Stays infallible by design: non-CLI callers (tests, telemetry) depend on
+ * being able to ask the classifier about any string without try/catch.
  */
 export function classifyModel(
   modelId: string,
   overrides?: Record<string, ModelTier>,
 ): ClassificationResult {
   if (overrides?.[modelId]) {
-    return { tier: overrides[modelId], family: 'override' };
+    return { tier: overrides[modelId], family: 'override', matched: 'override' };
   }
   const normalized = normalizeModelId(modelId);
   for (const rule of TIER_RULES) {
     if (rule.pattern.test(normalized)) {
-      return { tier: rule.tier, family: rule.family, matched: rule.pattern.source };
+      return {
+        tier: rule.tier,
+        family: rule.family ?? 'unknown',
+        matched: rule.pattern.source,
+      };
     }
   }
-  return { tier: 'large', family: 'unknown (default)' };
+  return { tier: null, family: 'unknown', matched: null };
 }

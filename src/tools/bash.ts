@@ -1,6 +1,7 @@
 import { execSync } from 'node:child_process';
 import { z } from 'zod';
-import type { Tool } from './interface.js';
+import type { Tool, ToolEvent } from './interface.js';
+import { truncateMiddle } from './truncate.js';
 
 /**
  * Paths that, when referenced in a bash command, warrant a visible warning
@@ -52,6 +53,41 @@ export function detectSensitivePaths(command: string): string[] {
     .map(({ name }) => name);
 }
 
+/**
+ * spec 029 (F-15b): token budget at which bash stdout/stderr gets head+tail
+ * truncated. Tunable via `config.tools.bash.overflow_tokens`.
+ */
+let BASH_OVERFLOW_TOKENS = 4000;
+
+export function setBashOverflowTokens(n: number): void {
+  BASH_OVERFLOW_TOKENS = n;
+}
+
+/**
+ * Truncate and label one stream. On truncation, append a recovery hint
+ * (`head`/`tail`/`sed`/`grep`) — without it, small models proceed past the
+ * marker as if it didn't matter. Returns `{ text, truncated }` so the caller
+ * can emit a `bash_truncated` event.
+ */
+function maybeTruncateBashStream(
+  text: string,
+  label: 'stdout' | 'stderr',
+): { text: string; truncated: boolean } {
+  if (!text) return { text: '', truncated: false };
+  const truncated = truncateMiddle(text, BASH_OVERFLOW_TOKENS);
+  if (truncated === text) {
+    return { text: `[${label}]\n${text}`, truncated: false };
+  }
+  return {
+    text:
+      `[${label}]\n${truncated}\n\n` +
+      `[hint] ${label} exceeded ${BASH_OVERFLOW_TOKENS} tokens. Middle sections truncated. ` +
+      `To see specific ranges, re-run with \`head -n N <cmd>\`, \`tail -n N <cmd>\`, ` +
+      `\`<cmd> | sed -n 'A,Bp'\`, or pipe through \`grep\` to filter.`,
+    truncated: true,
+  };
+}
+
 export const BashInputSchema = z.object({
   command: z.string().min(1),
   timeout: z.number().int().positive().optional(),
@@ -83,18 +119,33 @@ export const bashTool: Tool = {
         timeout,
         shell: process.platform === 'win32' ? 'cmd.exe' : '/bin/bash',
       });
-      return { content: result };
+      // spec 029 (F-15b): truncate the success path's stdout if over budget.
+      const out = maybeTruncateBashStream(result, 'stdout');
+      const events: ToolEvent[] = [];
+      if (out.truncated) {
+        events.push({ kind: 'bash_truncated', label: 'stdout', originalTokens: Math.round(result.length / 4) });
+      }
+      return { content: out.text || result, events: events.length ? events : undefined };
     } catch (err) {
       const execErr = err as { stdout?: string; stderr?: string; status?: number };
-      const output = [
-        execErr.stdout ?? '',
-        execErr.stderr ?? '',
-      ]
-        .filter(Boolean)
-        .join('\n');
+      // spec 029 (F-15b): truncate stdout and stderr independently so a huge
+      // stderr can't squeeze out early stdout. Each emits its own event.
+      const rawStdout = execErr.stdout ?? '';
+      const rawStderr = execErr.stderr ?? '';
+      const outPart = maybeTruncateBashStream(rawStdout, 'stdout');
+      const errPart = maybeTruncateBashStream(rawStderr, 'stderr');
+      const events: ToolEvent[] = [];
+      if (outPart.truncated) {
+        events.push({ kind: 'bash_truncated', label: 'stdout', originalTokens: Math.round(rawStdout.length / 4) });
+      }
+      if (errPart.truncated) {
+        events.push({ kind: 'bash_truncated', label: 'stderr', originalTokens: Math.round(rawStderr.length / 4) });
+      }
+      const combined = [outPart.text, errPart.text].filter(Boolean).join('\n');
       return {
-        content: output || `Command failed with exit code ${execErr.status}`,
+        content: combined || `Command failed with exit code ${execErr.status}`,
         isError: true,
+        events: events.length ? events : undefined,
       };
     }
   },

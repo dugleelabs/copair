@@ -3,7 +3,7 @@ import { existsSync, readFileSync } from 'node:fs';
 import { createRequire } from 'node:module';
 import { resolve, dirname } from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { parseArgs } from './cli/args.js';
+import { parseArgs, validateHeadlessGating } from './cli/args.js';
 import { printExplainModel } from './cli/explain-model.js';
 import { UnknownModelError, getCapabilities } from './core/model-capabilities.js';
 import { Agent } from './core/agent.js';
@@ -175,6 +175,17 @@ export async function bootstrapCLI(options: BootstrapOptions = {}): Promise<void
     getVersionString();
 
   const cliOpts = parseArgs(options.argv, versionString);
+
+  // ── Spec 047: flag-gating guard ────────────────────────────────────────
+  // The headless-only surface (task positional + headless flags) is illegal
+  // without --headless. Fail fast and clearly before any setup so an
+  // interactive invocation can never silently acquire headless semantics
+  // (US-4), and a headless-only flag never silently no-ops.
+  const gatingError = validateHeadlessGating(cliOpts);
+  if (gatingError) {
+    process.stderr.write(`${gatingError}\n`);
+    process.exit(1);
+  }
 
   if (cliOpts.debug) {
     logger.setLevel(LogLevel.DEBUG);

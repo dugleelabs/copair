@@ -113,6 +113,23 @@ export const SmallModelsConfigSchema = z.object({
   tier_overrides: z.record(z.string(), z.enum(['small', 'large'])).optional(),
   /** Maximum number of tool calls permitted per agent turn for small models (default: 20). */
   max_tool_calls: z.number().int().positive().optional(),
+
+  // ── Per-feature harness toggles (spec 047). All optional — an omitted field
+  //    means "current shipped behavior", so an absent `small_models` block
+  //    changes nothing (same pattern as `max_tool_calls` above, which the
+  //    call-site defaults to 20). The benchmark (spec 048) flips these via a
+  //    per-run `-c` config to ablate one feature at a time. Call-sites apply
+  //    the documented defaults in spec 047 Phase 1 (T-11).
+  /** Disable the result-aware loop guard when false. Default: true. */
+  enable_loop_guard: z.boolean().optional(),
+  /** Disable the tool-call format-error repair loop when false. Default: true. */
+  enable_format_repair: z.boolean().optional(),
+  /** Max format-repair retries before giving up. Default: 2. */
+  max_repair_retries: z.number().int().positive().optional(),
+  /** Drop the inspect-before-act system-prompt rule when false. Default: true. */
+  enable_inspect_before_act: z.boolean().optional(),
+  /** Force a specific tool-call formatter, bypassing capability resolution. Default: none. */
+  force_format: z.enum(['dsml', 'qwen-xml', 'fenced-block']).optional(),
 });
 
 /**

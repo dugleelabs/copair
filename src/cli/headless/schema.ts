@@ -140,6 +140,7 @@ const EventBase = {
 export const HeadlessEventSchema = z.discriminatedUnion('event', [
   z.object({ ...EventBase, event: z.literal('turn_started'), turn_index: z.number().int().nonnegative() }),
   z.object({ ...EventBase, event: z.literal('turn_completed'), turn_index: z.number().int().nonnegative() }),
+  // Reconciled to the bridge `tool-call-parsed` payload (spec 047 T-09/T-10).
   z.object({
     ...EventBase,
     event: z.literal('tool_call_parsed'),
@@ -147,23 +148,30 @@ export const HeadlessEventSchema = z.discriminatedUnion('event', [
     formatter: z.enum(FORMATTERS),
     tool: z.string().optional(),
   }),
-  z.object({ ...EventBase, event: z.literal('format_repair'), attempt: z.number().int().positive() }),
-  z.object({ ...EventBase, event: z.literal('format_repair_exhausted'), attempts: z.number().int().positive() }),
-  z.object({ ...EventBase, event: z.literal('loop_nudge'), tool: z.string(), repeats: z.number().int().positive() }),
-  z.object({ ...EventBase, event: z.literal('loop_halt'), tool: z.string(), repeats: z.number().int().positive() }),
+  // bridge `format-repair` carries `{specific_issue}`, not an attempt counter.
+  // Recorded as an occurrence — the optional issue is kept for diagnostics.
+  z.object({ ...EventBase, event: z.literal('format_repair'), specific_issue: z.string().optional() }),
+  z.object({ ...EventBase, event: z.literal('format_repair_exhausted'), specific_issue: z.string().optional() }),
+  // bridge `loop-nudge` carries only `{message}` — no tool/repeat counts.
+  z.object({ ...EventBase, event: z.literal('loop_nudge') }),
+  // bridge `loop-halt` carries `{reason}`.
+  z.object({ ...EventBase, event: z.literal('loop_halt'), reason: z.string() }),
+  // Reconciled from bridge `bash-truncated`/`read-overflow`/`grep-overflow`,
+  // which share no common payload — only the tool identity is portable.
   z.object({
     ...EventBase,
     event: z.literal('output_truncated'),
-    tool: z.string(),
-    kind: z.enum(['bash', 'read', 'grep']),
+    tool: z.enum(['bash', 'read', 'grep']),
   }),
   z.object({ ...EventBase, event: z.literal('tool_started'), tool: z.string() }),
+  // `tool-complete` → ok:true; `tool-denied` → ok:false, denied:true. `denied`
+  // is optional (absent/false on success).
   z.object({
     ...EventBase,
     event: z.literal('tool_completed'),
     tool: z.string(),
     ok: z.boolean(),
-    denied: z.boolean(),
+    denied: z.boolean().optional(),
   }),
   z.object({ ...EventBase, event: z.literal('approval_required'), tool: z.string() }),
   z.object({

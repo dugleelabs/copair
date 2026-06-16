@@ -51,6 +51,7 @@ import { PluginManager } from './core/plugin-manager.js';
 import type { CopairPlugin } from './plugins/interface.js';
 import { SmallModelHarness } from './core/small-model-harness.js';
 import { readFromTty } from './cli/tty-prompt.js';
+import { runHeadlessCommand } from './cli/headless/index.js';
 
 // ── Version helper ────────────────────────────────────────────────────────────
 
@@ -185,6 +186,14 @@ export async function bootstrapCLI(options: BootstrapOptions = {}): Promise<void
   if (gatingError) {
     process.stderr.write(`${gatingError}\n`);
     process.exit(1);
+  }
+
+  // ── Spec 047: headless dispatch ─────────────────────────────────────────
+  // Runs before ANY ink/REPL/global-init/project-init setup so the headless
+  // path never mounts the TTY UI or triggers interactive init flows (US-4).
+  if (cliOpts.headless) {
+    await runHeadlessCommand(cliOpts);
+    return;
   }
 
   if (cliOpts.debug) {

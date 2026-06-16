@@ -8,7 +8,7 @@ import { Renderer, formatToolCallFromInput } from '../cli/renderer.js';
 import { logger } from './logger.js';
 import { INJECTION_PREAMBLE, wrapFile, wrapToolResult } from './context-wrapper.js';
 
-import type { ToolCallFormatter, ParsedToolCall } from './formats/interface.js';
+import type { ToolCallFormatter, ParsedToolCall, ParseResult } from './formats/interface.js';
 import type { FormatName } from './formats/index.js';
 import { resolveFormatter, buildStreamingFilter, StreamingMarkupFilter, parseWithStrictFallback } from './formats/index.js';
 import { buildRepairMessage, MAX_REPAIR_RETRIES } from './formats/repair.js';
@@ -29,7 +29,33 @@ export interface AgentOptions {
   /** Fraction of maxTokens at which to warn about context limit (0–1, default 0.9). */
   contextLimitThresholdPct?: number;
   harness?: SmallModelHarness;
+  /**
+   * Spec 047 (T-12): hard cap on tool calls for this run, applied to ANY model
+   * class (not just small models). When set, overrides the small-model harness
+   * cap. Unset → small-model cap (or Infinity for large models).
+   */
+  maxToolCallsOverride?: number;
+  /**
+   * Spec 047 (T-12): cumulative (input+output) token budget for this run. The
+   * loop breaks once total tokens reach this value. Unset → no budget.
+   */
+  maxTokensBudget?: number;
 }
+
+/**
+ * Spec 047 (T-07): why the agent loop ended. Threaded out of `handleMessage`
+ * so the headless reporter can map it to the public `TerminationReason`. The
+ * interactive REPL ignores it (it destructures only `usage`/`lastInputTokens`).
+ */
+export type AgentTerminationReason =
+  | 'completed' // task_complete tool called
+  | 'model-declared-done' // natural loop exit — model stopped with no tool calls
+  | 'denied' // a tool was denied (or max-tool-calls stub-out via the denied path)
+  | 'context-exhausted' // context-limit handling fired
+  | 'max-tool-calls' // tool-call cap reached
+  | 'max-tokens' // token budget reached
+  | 'loop-halt' // loop guard halted the turn
+  | 'format-repair-exhausted'; // format-repair retries exhausted
 
 export class Agent {
   private provider: Provider;
@@ -38,6 +64,11 @@ export class Agent {
   private conversation: ConversationManager;
   private contextWindow: ContextWindowManager;
   private renderer: Renderer;
+  // Spec 047 (T-10): direct bridge ref for the `tool-call-parsed` event. The
+  // Renderer forwards most events; parse-attempt events have no Renderer
+  // surface, so the agent emits them straight to the bridge. The interactive
+  // ink UI simply doesn't subscribe — nothing breaks when this is unset.
+  private bridge?: AgentBridge;
   private options: AgentOptions;
   private _model: string;
   private formatter: ToolCallFormatter;
@@ -62,6 +93,7 @@ export class Agent {
     this.conversation = new ConversationManager();
     this.contextWindow = new ContextWindowManager(provider.maxContextWindow);
     this.renderer = new Renderer(options.bridge);
+    this.bridge = options.bridge;
     this.options = options;
     this.formatter = resolveFormatter(provider.name, model, options.toolCallFormat);
     this.textFilter = buildStreamingFilter(this.formatter);
@@ -128,6 +160,8 @@ export class Agent {
     usage: { inputTokens: number; outputTokens: number } | null;
     /** Input tokens from the last API call — reflects actual context window usage. */
     lastInputTokens: number;
+    /** Spec 047 (T-07): why the loop ended. Additive — existing callers ignore it. */
+    terminationReason: AgentTerminationReason;
   }> {
     // Spec 029 F-13: fresh conversation turn = fresh loop-guard deque so
     // cross-message state doesn't leak (a deterministic tool returning the
@@ -149,9 +183,16 @@ export class Agent {
     // model can fall back to the provider's built-in search capability.
     let agentWebSearchFailed = false;
 
-    // Small model tool-call cap — Infinity for large models
+    // Small model tool-call cap — Infinity for large models.
+    // Spec 047 (T-12): an explicit override applies to ANY model class.
     let toolCallCount = 0;
-    const maxToolCalls = this.harness?.isSmallModel ? (this.harness.maxToolCalls) : Infinity;
+    const maxToolCalls =
+      this.options.maxToolCallsOverride ??
+      (this.harness?.isSmallModel ? this.harness.maxToolCalls : Infinity);
+
+    // Spec 047 (T-07): default termination reason if the loop exits naturally
+    // (model stopped, no tool calls). Overwritten at each explicit break.
+    let terminationReason: AgentTerminationReason = 'model-declared-done';
 
     // Agent loop — keep calling provider until no more tool calls.
     // F-25: the streaming filter is reset inside `streamOnce` so
@@ -254,12 +295,32 @@ export class Agent {
           : { ...usage };
       }
 
+      // Spec 047 (T-12b): cumulative token-budget guard. Applies to any model
+      // class. Checked right after usage accumulates so the run stops before
+      // the next provider call rather than after.
+      if (
+        this.options.maxTokensBudget !== undefined &&
+        totalUsage !== null &&
+        totalUsage.inputTokens + totalUsage.outputTokens >= this.options.maxTokensBudget
+      ) {
+        terminationReason = 'max-tokens';
+        break;
+      }
+
       // Strip native search markers — they are display-only; the provider already
       // handled the search server-side within this same streaming response.
       // The model's answer (incorporating search results) is in fullText.
       let nonNativeToolCalls = nativeToolCalls.filter(
         (tc) => tc.name !== NATIVE_SEARCH_MARKER,
       );
+
+      // Spec 047 (T-10): native tool-calling models bypass text parsing — the
+      // provider SDK already produced structured calls. Emit one event per
+      // native call with formatter 'native' so 048's first-try validity counts
+      // them as always-valid (there's no markup to mis-format).
+      for (const tc of nonNativeToolCalls) {
+        this.bridge?.emit('tool-call-parsed', { valid: true, formatter: 'native', tool: tc.name });
+      }
 
       let toolCalls: ParsedToolCall[] = nonNativeToolCalls;
       let cleanedText = fullText;
@@ -269,13 +330,23 @@ export class Agent {
         // sometimes emit malformed markup; ask them to retry via a `[SYSTEM]`
         // nudge, capped at MAX_REPAIR_RETRIES. Small-tier only — large models
         // with reliable native tool calling keep the legacy parse path.
-        if (this.harness?.isSmallModel) {
+        // Spec 047 (T-11): format-repair is gated on BOTH small-model mode AND
+        // the per-feature toggle. When the toggle is off, small models still
+        // parse but skip the repair retry loop entirely.
+        if (this.harness?.isSmallModel && this.harness?.enableFormatRepair !== false) {
+          // Spec 047 (T-11): user-configurable repair cap; falls back to the
+          // shipped default constant.
+          const maxRepairRetries = this.harness?.maxRepairRetries ?? MAX_REPAIR_RETRIES;
           let parseResult = parseWithStrictFallback(this.formatter, fullText);
+          // Spec 047 (T-10): every parse attempt = one `tool-call-parsed` event
+          // (valid AND invalid). Repairs add attempts. format-validity for 048
+          // is valid ÷ attempts.
+          this.emitToolCallParsed(parseResult);
           let repairAttempts = 0;
           while (
             !parseResult.ok &&
             nonNativeToolCalls.length === 0 &&
-            repairAttempts < MAX_REPAIR_RETRIES
+            repairAttempts < maxRepairRetries
           ) {
             repairAttempts++;
             this.renderer.showFormatRepair(parseResult.error.specific_issue);
@@ -312,9 +383,15 @@ export class Agent {
               nonNativeToolCalls = retryNative;
               toolCalls = retryNative;
               parseResult = { ok: true, toolCalls: [], remainingText: reStream.fullText };
+              // Recovered via the native channel — count this as one native parse.
+              for (const tc of retryNative) {
+                this.bridge?.emit('tool-call-parsed', { valid: true, formatter: 'native', tool: tc.name });
+              }
               break;
             }
             parseResult = parseWithStrictFallback(this.formatter, fullText);
+            // Spec 047 (T-10): the repair retry is another parse attempt.
+            this.emitToolCallParsed(parseResult);
           }
 
           if (!parseResult.ok) {
@@ -331,9 +408,17 @@ export class Agent {
             cleanedText = parseResult.remainingText;
           }
         } else {
-          // Large-model legacy path (pre-F-14 behavior). Some providers (e.g.
-          // DeepSeek) leak native markup into text; merge those with native calls.
+          // Large-model legacy path (pre-F-14 behavior), OR a small model with
+          // format-repair disabled (T-11). Some providers (e.g. DeepSeek) leak
+          // native markup into text; merge those with native calls.
           const parsed = this.formatter.parse(fullText);
+          // Spec 047 (T-10): a single parse attempt on this path. Treated as
+          // valid when it yielded tool calls OR there was no markup to fault on.
+          this.bridge?.emit('tool-call-parsed', {
+            valid: true,
+            formatter: this.formatter.name,
+            tool: parsed.toolCalls[0]?.name,
+          });
           if (parsed.toolCalls.length > 0) {
             const nativeKeys = new Set(
               nonNativeToolCalls.map((tc) => `${tc.name}:${tc.arguments}`),
@@ -350,6 +435,7 @@ export class Agent {
       if (repairExhausted) {
         // Format-repair retries exhausted — surface to user (already shown
         // via showFormatRepairExhausted) and break the outer iteration loop.
+        terminationReason = 'format-repair-exhausted';
         break;
       }
 
@@ -390,6 +476,7 @@ export class Agent {
         if (action === 'compact') {
           this.contextWindow.markForCompaction();
         }
+        terminationReason = 'context-exhausted';
         break;
       }
 
@@ -421,12 +508,17 @@ export class Agent {
       const toolResults: ContentBlock[] = [];
       let denied = false;
       let taskCompleted = false;
+      // Spec 047 (T-07): disambiguate the break causes that all share the
+      // `denied`/abort plumbing so the reporter can map distinct reasons.
+      let maxToolCallsHit = false;
+      let loopHalted = false;
       for (const tc of toolCalls) {
         toolCallCount++;
 
         // Small model max-turn guard
         if (toolCallCount > maxToolCalls) {
           this.renderer.showMaxTurnWarning(maxToolCalls);
+          maxToolCallsHit = true;
           // Stub out remaining tool results so the API conversation stays valid
           for (let i = toolCalls.indexOf(tc); i < toolCalls.length; i++) {
             toolResults.push({
@@ -539,9 +631,16 @@ export class Agent {
         // raw result (pre-context-wrapping). On nudge, inject a [SYSTEM]
         // user-role message; on halt, push a synthetic tool_result and break
         // via the existing `denied` pattern.
-        const guardAction = this.loopGuard.observe(tc.name, toolInput, result.content);
+        // Spec 047 (T-11): per-feature toggle. When the loop guard is disabled,
+        // skip observation entirely and behave as if every call is novel (no
+        // nudge, no halt).
+        const guardAction =
+          this.harness?.enableLoopGuard === false
+            ? ({ kind: 'continue' } as const)
+            : this.loopGuard.observe(tc.name, toolInput, result.content);
         if (guardAction.kind === 'halt') {
           this.renderer.showLoopHalt(guardAction.reason);
+          loopHalted = true;
           toolResults.push({
             type: 'tool_result',
             toolUseId: tc.id,
@@ -617,11 +716,34 @@ export class Agent {
       // Even on denial, every tool_use must have a matching tool_result.
       this.conversation.append('user', toolResults);
 
-      // task_complete or max-turn exceeded — end the agent turn
-      if (taskCompleted || denied) break;
+      // task_complete or max-turn exceeded — end the agent turn.
+      // Spec 047 (T-07): resolve the specific termination reason. Order matters
+      // — task_complete wins, then the distinct abort causes.
+      if (taskCompleted || denied) {
+        if (taskCompleted) terminationReason = 'completed';
+        else if (maxToolCallsHit) terminationReason = 'max-tool-calls';
+        else if (loopHalted) terminationReason = 'loop-halt';
+        else terminationReason = 'denied';
+        break;
+      }
     }
 
-    return { usage: totalUsage, lastInputTokens };
+    return { usage: totalUsage, lastInputTokens, terminationReason };
+  }
+
+  /**
+   * Spec 047 (T-10): emit a `tool-call-parsed` event for one text-formatter
+   * parse attempt. `valid` = whether the strict parse succeeded; `formatter` =
+   * the active text formatter's name; `tool` = the first parsed tool name when
+   * available. Counting semantics: every call is one parse attempt; the repair
+   * loop calls this once per retry so attempts ≥ tool calls.
+   */
+  private emitToolCallParsed(result: ParseResult): void {
+    this.bridge?.emit('tool-call-parsed', {
+      valid: result.ok,
+      formatter: this.formatter.name,
+      tool: result.ok ? result.toolCalls[0]?.name : undefined,
+    });
   }
 
   /**

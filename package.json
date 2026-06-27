@@ -19,6 +19,7 @@
     "build": "tsup && node scripts/report-dist-size.mjs",
     "test": "vitest run",
     "test:watch": "vitest",
+    "schemas:export": "UPDATE_SCHEMAS=1 vitest run tests/cli/headless/schema-artifacts.test.ts",
     "lint": "eslint src/",
     "lint:fix": "eslint src/ --fix",
     "dev": "tsup --watch",
@@ -27,6 +28,7 @@
   },
   "files": [
     "dist",
+    "schemas",
     "README.md",
     "LICENSE"
   ],

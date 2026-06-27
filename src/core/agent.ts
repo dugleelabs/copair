@@ -293,6 +293,19 @@ export class Agent {
               outputTokens: totalUsage.outputTokens + usage.outputTokens,
             }
           : { ...usage };
+        // Spec 047 (T-06/T-09): emit one bridge `usage` event per provider
+        // response. Headless mode treats this as the assistant-turn boundary
+        // (the reporter counts it; the event sink opens a turn). It also feeds
+        // the interactive status bar (previously unwired — nothing emitted
+        // `usage`). Cost is left to the TokenTracker, which prices separately.
+        this.bridge?.emit('usage', {
+          inputTokens: usage.inputTokens,
+          outputTokens: usage.outputTokens,
+          cost: 0,
+          sessionInputTokens: totalUsage.inputTokens,
+          sessionOutputTokens: totalUsage.outputTokens,
+          sessionCost: 0,
+        });
       }
 
       // Spec 047 (T-12b): cumulative token-budget guard. Applies to any model

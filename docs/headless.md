@@ -250,9 +250,12 @@ merged config.
 ## Toggling harness features (ablation)
 
 The small-model harness features are configured under `small_models` (see
-[configuration.md](configuration.md)). For a controlled run, combine
-`--isolated` with a per-run `-c` file so only your overrides apply on top of the
-defaults:
+[configuration.md](configuration.md)). There are two ways to flip a toggle for a
+run, with different reproducibility guarantees.
+
+**Overlay (quick, not isolated).** A `-c` file layers on top of your global +
+project config (see [Config resolution](#config-resolution)), so the model stays
+resolvable from your existing config and only the toggle changes:
 
 ```yaml
 # ablate-no-loop-guard.yaml
@@ -262,9 +265,51 @@ small_models:
 ```
 
 ```sh
-copair --headless --isolated -c ablate-no-loop-guard.yaml \
+copair --headless -c ablate-no-loop-guard.yaml \
   --events run.jsonl --model qwen-7b "…task…"
 ```
+
+`config_sources` will then include `global` / `project` — your ambient config
+also contributed, so this is convenient but not a clean, reproducible run.
+
+**Isolated (reproducible).** `--isolated` ignores global + project config, so the
+`-c` file must be **self-contained**: it has to define the `providers` entry for
+the model — and, because the strict-unknowns guard also runs without your config,
+any `model_overrides` the alias needs. copair ships **no** built-in providers, so
+an isolated `-c` that omits the provider fails with *"Model … not found in any
+provider."* before the run starts.
+
+```yaml
+# ablate-no-loop-guard.isolated.yaml
+version: 1
+default_model: qwen-7b
+providers:
+  ollama:
+    type: openai-compatible
+    base_url: http://localhost:11434/v1
+    models:
+      qwen-7b:
+        id: qwen2.5:7b
+        supports_tool_calling: false
+        context_window: 131072
+model_overrides:       # required when the alias isn't a built-in family
+  qwen-7b:
+    tier: small
+    preferred_format: qwen-xml
+    context_window: 131072
+    max_tokens: 4096
+    native_tool_calling: unreliable
+small_models:
+  enable_loop_guard: false   # the ablation
+```
+
+```sh
+copair --headless --isolated -c ablate-no-loop-guard.isolated.yaml \
+  --events run.jsonl --model qwen-7b "…task…"
+```
+
+`config_sources` is then `["defaults","-c:<abs path>"]` — nothing ambient
+contributed. This is the form a reproducible benchmark run should use.
 
 The config-driven toggles and their defaults:
 

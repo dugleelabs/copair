@@ -93,7 +93,7 @@ const TIER_RULES: TierRule[] = [
   { pattern: /^o[134](?:-mini|-pro)?\b/, tier: 'large', family: 'OpenAI o-series' },
   { pattern: /^gemini-[23]/, tier: 'large', family: 'Gemini' },
   { pattern: /^grok-[1-9]/, tier: 'large', family: 'Grok' },
-  { pattern: /^kimi-k2/, tier: 'large', family: 'Kimi K2' },
+  { pattern: /^kimi-(?:k2|2)/, tier: 'large', family: 'Kimi K2' },
   { pattern: /^minimax-m[1-9]/, tier: 'large', family: 'MiniMax' },
 
   // ── Cohere Command (large vs small split — small most specific first) ──

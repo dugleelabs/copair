@@ -36,7 +36,7 @@ import shippedData from '../../data/model-capabilities.json' with { type: 'json'
 // Do not refactor casually; users will hit this URL in error messages, and the
 // page route is coordinated across copair (this constant) and the copair-website
 // page (T-W05). Renaming requires a coordinated rename in both places.
-const DOCS_URL_CUSTOM_MODELS = 'https://docs.copair.dev/custom-and-local-models';
+const DOCS_URL_CUSTOM_MODELS = 'https://copair.dugleelabs.io/docs/custom-and-local-models';
 
 // ── Capability schemas ─────────────────────────────────────────────────────
 

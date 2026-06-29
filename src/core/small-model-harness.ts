@@ -4,12 +4,24 @@ import { getCapabilities } from './model-capabilities.js';
 
 export { type SmallModelsConfig as SmallModelConfig };
 
-const SMALL_MODEL_SYSTEM_PROMPT = `Small model operating rules:
-1. Call tools one at a time. Wait for the result before chaining the next call.
-2. If the task or a required detail is unclear, emit \`UNCLEAR: <your question>\` on its own line before calling any tool.
-3. Call the \`task_complete\` tool with a one-sentence summary when the task is finished.
-4. Use the \`ask_user\` tool to collect information you cannot infer from context.
-5. Before editing a file, read it first. Before calling a tool with a path, id, or name, verify it exists via list/search. Never invent identifiers.`;
+// Rule list built into the small-model system prompt. Kept as discrete entries
+// so spec 047 (T-11) can drop the inspect-before-act rule cleanly when the
+// `enable_inspect_before_act` toggle is off. Order is the documented numbering.
+const SMALL_MODEL_RULES = {
+  oneAtATime: 'Call tools one at a time. Wait for the result before chaining the next call.',
+  unclear:
+    'If the task or a required detail is unclear, emit `UNCLEAR: <your question>` on its own line before calling any tool.',
+  taskComplete: 'Call the `task_complete` tool with a one-sentence summary when the task is finished.',
+  askUser: 'Use the `ask_user` tool to collect information you cannot infer from context.',
+  inspectBeforeAct:
+    'Before editing a file, read it first. Before calling a tool with a path, id, or name, verify it exists via list/search. Never invent identifiers.',
+} as const;
+
+/** Assemble the small-model system prompt from a rule list, renumbering 1..N. */
+function buildSmallModelSystemPrompt(rules: string[]): string {
+  const numbered = rules.map((r, i) => `${i + 1}. ${r}`).join('\n');
+  return `Small model operating rules:\n${numbered}`;
+}
 
 const SMALL_MODEL_PER_TURN_REMINDER =
   'Reminder: one tool call at a time; call task_complete when the task is done.';
@@ -68,9 +80,42 @@ export class SmallModelHarness {
     return resolveMaxToolCalls(this.modelId, this.config);
   }
 
+  // ── Spec 047 (T-11): per-feature harness toggles. All default to the shipped
+  //    behavior so an absent `small_models` config changes nothing. ──
+
+  /** Result-aware loop guard enabled? Default: true. */
+  get enableLoopGuard(): boolean {
+    return this.config.enable_loop_guard ?? true;
+  }
+
+  /** Tool-call format-error repair loop enabled? Default: true. */
+  get enableFormatRepair(): boolean {
+    return this.config.enable_format_repair ?? true;
+  }
+
+  /** Inspect-before-act system-prompt rule included? Default: true. */
+  get enableInspectBeforeAct(): boolean {
+    return this.config.enable_inspect_before_act ?? true;
+  }
+
+  /** Max format-repair retries before giving up. Default: 2. */
+  get maxRepairRetries(): number {
+    return this.config.max_repair_retries ?? 2;
+  }
+
   getSystemPromptAddition(): string | null {
     if (!this.isSmallModel) return null;
-    return SMALL_MODEL_SYSTEM_PROMPT;
+    const rules: string[] = [
+      SMALL_MODEL_RULES.oneAtATime,
+      SMALL_MODEL_RULES.unclear,
+      SMALL_MODEL_RULES.taskComplete,
+      SMALL_MODEL_RULES.askUser,
+    ];
+    // Spec 047 (T-11): drop rule #5 (inspect-before-act) when the toggle is off.
+    if (this.enableInspectBeforeAct) {
+      rules.push(SMALL_MODEL_RULES.inspectBeforeAct);
+    }
+    return buildSmallModelSystemPrompt(rules);
   }
 
   getPerTurnReminder(): string | null {

@@ -76,7 +76,7 @@ describe('--explain-model — pretty output', () => {
     // Structured error on stderr with the model ID and docs link.
     expect(stderr).toMatch(/Unknown model "some-totally-fake-model-id"/);
     expect(stderr).toMatch(/model_overrides/);
-    expect(stderr).toMatch(/docs\.copair\.dev\/custom-and-local-models/);
+    expect(stderr).toMatch(/copair\.dugleelabs\.io\/docs\/custom-and-local-models/);
   });
 
   it('handles Bedrock-prefixed model IDs via normalization', () => {

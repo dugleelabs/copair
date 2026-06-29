@@ -134,7 +134,7 @@ describe('Spec 029 F-11 — UnknownModelError message hygiene (NF-08)', () => {
       const msg = (err as UnknownModelError).message;
       expect(msg).toContain('Mystery-Model:7B'); // raw form
       expect(msg).toContain('mystery-model-7b'); // normalized form
-      expect(msg).toContain('https://docs.copair.dev/custom-and-local-models');
+      expect(msg).toContain('https://copair.dugleelabs.io/docs/custom-and-local-models');
       expect(msg).toContain('model_overrides'); // tells user what to do
     }
   });

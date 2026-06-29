@@ -112,7 +112,7 @@
       }
     },
     {
-      "pattern": "^kimi-k2",
+      "pattern": "^kimi-(?:k2|2)",
       "family": "Moonshot Kimi K2",
       "capabilities": {
         "context_window": 200000,

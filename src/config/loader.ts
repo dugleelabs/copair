@@ -90,25 +90,89 @@ function loadYamlFile(filePath: string): Record<string, unknown> | null {
   return parseYaml(content) as Record<string, unknown>;
 }
 
-export function loadConfig(projectDir?: string): CopairConfig {
-  const globalPath = resolve(homedir(), '.copair', 'config.yaml');
-  const projectPath = projectDir
-    ? resolve(projectDir, '.copair', 'config.yaml')
-    : resolve(process.cwd(), '.copair', 'config.yaml');
+/**
+ * Spec 047 (T-13): options for the config loader. All optional — when omitted
+ * the loader behaves exactly as the legacy `loadConfig(projectDir?)` form.
+ */
+export interface LoadConfigOptions {
+  /** Directory whose `.copair/config.yaml` is the project-layer source. */
+  projectDir?: string;
+  /**
+   * When true, skip the global (`~/.copair`) and project (`.copair`) layers
+   * entirely. Only built-in defaults plus an explicit `-c` file contribute.
+   * Used by the benchmark harness for reproducible, machine-state-free runs.
+   */
+  isolated?: boolean;
+  /** Absolute path to an explicit config file (the `-c`/`--config` flag). */
+  explicitConfigPath?: string;
+}
 
-  const globalConfig = loadYamlFile(globalPath);
-  const projectConfig = loadYamlFile(projectPath);
+/**
+ * Spec 047 (T-13): `loadConfig` + a record of which layers contributed, in
+ * precedence order (low → high). The headless reporter surfaces `sources` as
+ * `resolved_config.config_sources`. Examples:
+ *   - `["defaults"]`                         — no files found
+ *   - `["defaults","global","project"]`      — both layers present
+ *   - `["defaults","-c:/abs/path"]`          — isolated run with explicit file
+ */
+export function loadConfigWithSources(
+  options: LoadConfigOptions = {},
+): { config: CopairConfig; sources: string[] } {
+  const { projectDir, isolated = false, explicitConfigPath } = options;
 
-  if (!globalConfig && !projectConfig) {
-    // Return minimal default config
-    return CopairConfigSchema.parse({ version: CURRENT_CONFIG_VERSION });
+  const sources: string[] = ['defaults'];
+  const layers: Record<string, unknown>[] = [];
+
+  if (isolated) {
+    // Isolated: ignore global + project. Only an explicit `-c` file may layer
+    // on top of the built-in defaults.
+    if (explicitConfigPath) {
+      const explicit = loadYamlFile(resolve(explicitConfigPath));
+      if (explicit) {
+        layers.push(explicit);
+        sources.push(`-c:${resolve(explicitConfigPath)}`);
+      }
+    }
+  } else {
+    const globalPath = resolve(homedir(), '.copair', 'config.yaml');
+    const projectPath = projectDir
+      ? resolve(projectDir, '.copair', 'config.yaml')
+      : resolve(process.cwd(), '.copair', 'config.yaml');
+
+    const globalConfig = loadYamlFile(globalPath);
+    const projectConfig = loadYamlFile(projectPath);
+
+    if (globalConfig) {
+      layers.push(globalConfig);
+      sources.push('global');
+    }
+    if (projectConfig) {
+      layers.push(projectConfig);
+      sources.push('project');
+    }
+
+    // Explicit `-c` file layers on top of global + project when supplied.
+    if (explicitConfigPath) {
+      const explicit = loadYamlFile(resolve(explicitConfigPath));
+      if (explicit) {
+        layers.push(explicit);
+        sources.push(`-c:${resolve(explicitConfigPath)}`);
+      }
+    }
   }
 
-  let merged: Record<string, unknown>;
-  if (globalConfig && projectConfig) {
-    merged = deepMerge(globalConfig, projectConfig);
-  } else {
-    merged = (globalConfig ?? projectConfig)!;
+  if (layers.length === 0) {
+    // Return minimal default config — no file layers contributed. Mirrors the
+    // legacy early-return: capabilities/tool-overflow side effects are NOT
+    // applied here (no user overrides to push), preserving existing behavior.
+    const config = CopairConfigSchema.parse({ version: CURRENT_CONFIG_VERSION });
+    return { config, sources };
+  }
+
+  // Deep-merge layers in precedence order (later wins).
+  let merged: Record<string, unknown> = layers[0];
+  for (let i = 1; i < layers.length; i++) {
+    merged = deepMerge(merged, layers[i]);
   }
 
   // Default version when absent — allows minimal project configs (e.g. only
@@ -144,7 +208,20 @@ export function loadConfig(projectDir?: string): CopairConfig {
   applyModelOverridesToCapabilities(config);
   applyToolOverflowConfig(config);
 
-  return config;
+  return { config, sources };
+}
+
+/**
+ * Load the merged copair config. Backwards-compatible: a `string | undefined`
+ * first argument is treated as `projectDir` (the legacy signature); an options
+ * object selects the spec 047 isolated/explicit-path behavior.
+ */
+export function loadConfig(projectDirOrOptions?: string | LoadConfigOptions): CopairConfig {
+  const options: LoadConfigOptions =
+    typeof projectDirOrOptions === 'string'
+      ? { projectDir: projectDirOrOptions }
+      : projectDirOrOptions ?? {};
+  return loadConfigWithSources(options).config;
 }
 
 /**

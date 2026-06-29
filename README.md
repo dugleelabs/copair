@@ -110,6 +110,19 @@ In `ask` mode you can approve once or always-allow for the session. Shell operat
 
 → [Permission docs](docs/configuration.md#permission-modes)
 
+## Headless Mode
+
+Run a single task non-interactively — prompt in, structured JSON result out, no TTY:
+
+```sh
+copair --headless "fix the failing test in src/foo.ts" --model qwen-7b
+echo "summarize src/index.ts" | copair --headless --model qwen-7b
+```
+
+stdout carries exactly one JSON result document; stderr carries the streaming text (unless `--quiet`); `--events <path>` writes a JSONL mechanism-event stream. The result and event shapes are committed as versioned JSON Schema under [`schemas/`](schemas/).
+
+→ [Headless mode docs](docs/headless.md)
+
 ## Token Tracking
 
 After each response:

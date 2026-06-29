@@ -60,3 +60,26 @@ The `allow_commands` list auto-approves exact bash commands. Commands with shell
 ## Environment Variables
 
 Any config value can reference an env var with `${VAR_NAME}` syntax. Unresolved vars produce a load-time error.
+
+## Small-model harness (`small_models`)
+
+Tunes the small-model harness. Every key is optional; an omitted key keeps the
+current shipped behavior, so an absent `small_models` block changes nothing.
+
+```yaml
+small_models:
+  tier_overrides:              # model ID → tier ("small" | "large")
+    my-finetune: small         # overrides the built-in classifier; loses to --small-model / --no-small-model
+  max_tool_calls: 20           # per-turn tool-call limit for small models (default: 20)
+
+  enable_loop_guard: true        # result-aware loop guard (default: true)
+  enable_format_repair: true     # tool-call format-error repair loop (default: true)
+  max_repair_retries: 2          # format-repair retries before giving up (default: 2)
+  enable_inspect_before_act: true # inspect-before-act system-prompt rule (default: true)
+  force_format: dsml             # force a formatter: dsml | qwen-xml | fenced-block (default: none)
+```
+
+The three boolean toggles (`enable_loop_guard`, `enable_format_repair`,
+`enable_inspect_before_act`) and `force_format` are echoed back in headless
+runs' `resolved_config`, which makes them the basis of the benchmark ablation
+pattern. → [Headless mode](headless.md#toggling-harness-features-ablation)

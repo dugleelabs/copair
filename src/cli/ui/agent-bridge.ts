@@ -90,6 +90,13 @@ export interface AgentBridgeEvents {
   'loop-nudge': (data: { message: string }) => void;
   /** Spec 029 F-13: loop guard halted the agent turn after 3 identical tool repeats. */
   'loop-halt': (data: { reason: string }) => void;
+  /**
+   * Spec 047 (T-10): one tool-call parse attempt. Emitted for BOTH valid and
+   * invalid outcomes on the text-formatter path, and once per native tool call
+   * (`formatter: 'native'`). Counting: every parse attempt is one event;
+   * format-repair retries add attempts. The ink UI does not subscribe.
+   */
+  'tool-call-parsed': (data: { valid: boolean; formatter: string; tool?: string }) => void;
   /** Spec 029 F-14: format-repair retry fired after a parseStrict failure. */
   'format-repair': (data: { specific_issue: string }) => void;
   /** Spec 029 F-14: format-repair retries exhausted; agent turn breaks. */

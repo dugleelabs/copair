@@ -277,8 +277,14 @@ describe('headless CLI — kill -9 mid-run leaves parseable partial JSONL (T-15)
         cwd: env.project,
         env: { ...process.env, HOME: env.home, USERPROFILE: env.home },
       });
-      // Give it time to boot + create the events file + issue the provider call.
-      await new Promise((r) => setTimeout(r, 1500));
+      // Wait until the child has booted far enough to create the events file
+      // AND issue the provider call (`i > 0`), then SIGKILL. Polling instead of
+      // a fixed sleep keeps this deterministic on slower-booting platforms
+      // (Windows CI) rather than racing a hard-coded delay.
+      const deadline = Date.now() + 15_000;
+      while (Date.now() < deadline && !(existsSync(eventsPath) && i > 0)) {
+        await new Promise((r) => setTimeout(r, 100));
+      }
       child.kill('SIGKILL');
       await new Promise((r) => child.on('exit', r));
 

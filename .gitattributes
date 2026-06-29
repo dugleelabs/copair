@@ -1,0 +1,7 @@
+# The headless JSON Schema artifacts are a pinned, byte-stable contract
+# (spec 047 T-20): spec 048 pins the committed bytes and the drift guard
+# (tests/cli/headless/schema-artifacts.test.ts) compares them byte-for-byte
+# against the generator output (which always writes LF). Force LF on checkout
+# so the files are identical on every platform — otherwise Windows checks them
+# out with CRLF and the drift guard fails there.
+schemas/*.json text eol=lf

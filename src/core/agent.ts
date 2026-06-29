@@ -789,6 +789,18 @@ export class Agent {
 
   /** Prompt the user for input and return their answer (used by ask_user intercept). */
   private async collectUserAnswer(question: string): Promise<string> {
+    // Bridge mode (interactive ink UI / headless): route through the
+    // `input-request` event so the UI renders an inline prompt and headless can
+    // answer without blocking — mirrors the command-intake path in bootstrap.ts.
+    // Only fall back to the direct stdin/stdout read below when nothing is
+    // listening (legacy / no-bridge). This keeps headless stdout pure (the
+    // result JSON is the only thing written there) and prevents a hang when
+    // stdin is at EOF in a non-interactive run.
+    if (this.bridge && this.bridge.listenerCount('input-request') > 0) {
+      return new Promise<string>((resolve) => {
+        this.bridge!.emit('input-request', question, resolve);
+      });
+    }
     process.stdout.write(`\n[copair] ${question}\n> `);
     return new Promise((resolve) => {
       const chunks: Buffer[] = [];

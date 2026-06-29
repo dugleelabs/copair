@@ -303,6 +303,42 @@ describe('headless CLI — kill -9 mid-run leaves parseable partial JSONL (T-15)
   });
 });
 
+// ── ask_user must not break headless I/O isolation (regression) ───────────────
+
+describe('headless CLI — ask_user routes through the no-hang handler (regression)', () => {
+  it('does not pollute stdout or hang when a small model calls ask_user', async () => {
+    // ask_user is injected for small models only. Before the fix it was answered
+    // by writing the question to STDOUT and reading stdin directly — which both
+    // corrupted the single-JSON-document contract and hung in a non-interactive
+    // run (stdin at EOF). It must instead go through the bridge `input-request`
+    // handler, which answers empty in headless. Turn 1 calls ask_user; turn 2
+    // ends the run.
+    const askCall =
+      '<tool_call>\n' +
+      JSON.stringify({ name: 'ask_user', arguments: { question: 'Which file should I edit?' } }) +
+      '\n</tool_call>'
+    const port = await server([
+      { text: askCall, usage: { input: 20, output: 8 } },
+      { text: 'All done.', usage: { input: 22, output: 6 } },
+    ])
+    const env = sandbox({ port, tier: 'small', preferredFormat: 'qwen-xml' })
+    try {
+      const res = await runHeadless(['go'], env)
+      // The run completed (exit 0) rather than hanging until the 12s SIGKILL.
+      expect(res.status).toBe(0)
+      // STDOUT carries exactly one JSON document — the interactive prompt text
+      // never leaked there.
+      expect(res.stdout).not.toContain('[copair]')
+      const lines = res.stdout.trim().split('\n').filter(Boolean)
+      expect(lines).toHaveLength(1)
+      const result = HeadlessResultSchema.parse(JSON.parse(lines[0]))
+      expect(result.termination_reason).toBe('model-declared-done')
+    } finally {
+      cleanup(env.home, env.project)
+    }
+  })
+})
+
 // ── T-17: ablation smoke — toggles take effect in resolved_config ─────────────
 
 describe('headless CLI — ablation: toggles surface in resolved_config (T-17)', () => {
